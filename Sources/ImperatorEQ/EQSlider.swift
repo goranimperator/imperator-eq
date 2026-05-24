@@ -45,7 +45,11 @@ struct EQSlider: View {
                 )
                 context.fill(
                     Path(fillRect),
-                    with: .color(Color(red: 0xA0 / 255.0, green: 0x18 / 255.0, blue: 0x18 / 255.0))
+                    with: .linearGradient(
+                        Gradient(colors: Theme.gradientColors.reversed()),
+                        startPoint: CGPoint(x: fillRect.minX, y: 0),
+                        endPoint: CGPoint(x: fillRect.maxX, y: 0)
+                    )
                 )
 
                 for tick in 0...10 {

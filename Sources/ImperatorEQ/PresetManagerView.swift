@@ -142,7 +142,7 @@ struct PresetRowView: View {
             Button(action: onApply) {
                 HStack(spacing: 6) {
                     Circle()
-                        .fill(isActive ? Color(red: 0.85, green: 0.2, blue: 0.2) : Color.gray.opacity(0.3))
+                        .fill(isActive ? Theme.brand : Color.gray.opacity(0.3))
                         .frame(width: 8, height: 8)
                     Text(preset.name)
                         .font(.system(.body, weight: isActive ? .medium : .regular))

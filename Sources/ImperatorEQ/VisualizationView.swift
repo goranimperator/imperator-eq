@@ -63,13 +63,6 @@ struct VisualizationView: View {
     }
 
     private var barGradient: LinearGradient {
-        LinearGradient(
-            colors: [
-                Color(red: 0xA0 / 255.0, green: 0x18 / 255.0, blue: 0x18 / 255.0),
-                Color(red: 0xA0 / 255.0, green: 0x18 / 255.0, blue: 0x18 / 255.0).opacity(0.6)
-            ],
-            startPoint: .top,
-            endPoint: .bottom
-        )
+        LinearGradient(colors: Theme.gradientColors, startPoint: .top, endPoint: .bottom)
     }
 }
