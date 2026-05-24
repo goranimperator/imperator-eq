@@ -208,7 +208,7 @@ final class AudioEngine: ObservableObject {
                 let volume = ctx.volume
                 let balance = ctx.balance
                 // Boost compensates for signal level loss through BlackHole routing
-                let boost: Float = 10.0
+                let boost: Float = 1.5
                 let leftGain = volume * min(1.0, 1.0 - balance) * boost
                 let rightGain = volume * min(1.0, 1.0 + balance) * boost
 
@@ -231,7 +231,7 @@ final class AudioEngine: ObservableObject {
                         var sum: Float = 0
                         for j in start..<end { sum += abs(left[j]) }
                         let avg = sum / Float(end - start)
-                        ctx.vizLevels[b] = min(avg * 25.0, 1.0)
+                        ctx.vizLevels[b] = min(avg * 9.4, 1.0)
                     }
                     ctx.vizReady = true
                 }

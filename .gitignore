@@ -2,3 +2,5 @@
 .swiftpm/
 *.app
 .DS_Store
+ImperatorEQDriver.driver/
+Resources/AppIcon.iconset/
