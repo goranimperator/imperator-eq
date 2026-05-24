@@ -1,0 +1,148 @@
+import SwiftUI
+import AppKit
+
+struct ScrollWheelModifier: ViewModifier {
+    let handler: (CGFloat) -> Void
+
+    func body(content: Content) -> some View {
+        content.overlay(
+            ScrollWheelReceiver(handler: handler)
+        )
+    }
+}
+
+struct ScrollWheelReceiver: NSViewRepresentable {
+    let handler: (CGFloat) -> Void
+
+    func makeNSView(context: Context) -> ScrollWheelNSView {
+        let view = ScrollWheelNSView()
+        view.handler = handler
+        return view
+    }
+
+    func updateNSView(_ nsView: ScrollWheelNSView, context: Context) {
+        nsView.handler = handler
+    }
+}
+
+final class ScrollWheelNSView: NSView {
+    var handler: ((CGFloat) -> Void)?
+
+    override func scrollWheel(with event: NSEvent) {
+        handler?(event.scrollingDeltaY)
+    }
+}
+
+extension View {
+    func onScrollWheel(_ handler: @escaping (CGFloat) -> Void) -> some View {
+        modifier(ScrollWheelModifier(handler: handler))
+    }
+}
+
+struct EQBandsView: View {
+    @Binding var bands: [EQBand]
+    let isEnabled: Bool
+
+    var body: some View {
+        GeometryReader { geometry in
+            let bandWidth = geometry.size.width / CGFloat(bands.count)
+            let maxHeight = geometry.size.height - 24
+
+            HStack(spacing: 0) {
+                ForEach(bands.indices, id: \.self) { index in
+                    EQBandColumn(
+                        band: $bands[index],
+                        maxHeight: maxHeight,
+                        width: bandWidth,
+                        isEnabled: isEnabled
+                    )
+                }
+            }
+        }
+    }
+}
+
+struct EQBandColumn: View {
+    @Binding var band: EQBand
+    let maxHeight: CGFloat
+    let width: CGFloat
+    let isEnabled: Bool
+
+    @State private var isDragging = false
+
+    private let maxGain: Float = 12.0
+    private let brandRed = Color(red: 0xA0 / 255.0, green: 0x18 / 255.0, blue: 0x18 / 255.0)
+
+    private var normalizedGain: CGFloat {
+        CGFloat((band.gain + maxGain) / (2 * maxGain))
+    }
+
+    var body: some View {
+        VStack(spacing: 4) {
+            ZStack(alignment: .bottom) {
+                Rectangle()
+                    .fill(Color.gray.opacity(0.15))
+                    .frame(width: width * 0.4, height: maxHeight)
+
+                Rectangle()
+                    .fill(bandGradient)
+                    .frame(
+                        width: width * 0.4,
+                        height: max(2, normalizedGain * maxHeight)
+                    )
+                    .opacity(isEnabled ? 1.0 : 0.3)
+
+                ForEach(0..<11, id: \.self) { tick in
+                    let tickY = CGFloat(tick) / 10.0 * maxHeight
+                    Rectangle()
+                        .fill(Color.white.opacity(tick == 0 || tick == 5 || tick == 10 ? 0.3 : 0.15))
+                        .frame(width: tick == 0 || tick == 5 || tick == 10 ? width * 0.8 : width * 0.5 + 4, height: tick == 0 || tick == 5 || tick == 10 ? 1 : 0.5)
+                        .offset(y: -(tickY - 0.5))
+                }
+
+                let fillHeight = normalizedGain * maxHeight
+                RoundedRectangle(cornerRadius: 3)
+                    .fill(Color(white: 0.35))
+                    .frame(width: width * 0.5, height: 14)
+                    .shadow(color: .black.opacity(0.35), radius: 2, y: 1)
+                    .offset(y: -(fillHeight - 7))
+                    .opacity(isEnabled ? 1.0 : 0.3)
+            }
+            .frame(height: maxHeight)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        isDragging = true
+                        let normalizedY = 1.0 - (value.location.y / maxHeight)
+                        let clamped = max(0.0, min(1.0, normalizedY))
+                        band.gain = Float(clamped) * 2 * maxGain - maxGain
+                    }
+                    .onEnded { _ in
+                        isDragging = false
+                    }
+            )
+            .onScrollWheel { delta in
+                let step: Float = 0.125
+                band.gain = max(-maxGain, min(maxGain, band.gain - Float(delta) * step))
+            }
+
+            Text(band.frequency)
+                .font(.system(size: 9))
+                .foregroundStyle(.tertiary)
+                .frame(height: 16)
+        }
+        .frame(width: width)
+    }
+
+    private var bandGradient: LinearGradient {
+        LinearGradient(
+            colors: [
+                Color(red: 0xA0 / 255.0, green: 0x18 / 255.0, blue: 0x18 / 255.0),
+                Color(red: 0xA0 / 255.0, green: 0x18 / 255.0, blue: 0x18 / 255.0).opacity(0.6)
+            ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+    }
+}
