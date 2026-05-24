@@ -26,6 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        eqStore.saveState()
         audioEngine.stop()
     }
 

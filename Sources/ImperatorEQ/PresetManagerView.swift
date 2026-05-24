@@ -51,6 +51,7 @@ struct PresetManagerView: View {
                                 PresetRowView(
                                     preset: preset,
                                     isActive: store.activePresetId == preset.id,
+                                    isDefault: preset.isDefault,
                                     onApply: { store.applyPreset(preset) },
                                     onUpdate: { store.updatePreset(preset) },
                                     onDelete: { store.deletePreset(preset) },
@@ -146,6 +147,7 @@ struct RenamePresetSheet: View {
 struct PresetRowView: View {
     let preset: EQPreset
     let isActive: Bool
+    let isDefault: Bool
     let onApply: () -> Void
     let onUpdate: () -> Void
     let onDelete: () -> Void
@@ -156,21 +158,18 @@ struct PresetRowView: View {
 
     var body: some View {
         HStack {
-            Button(action: onApply) {
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(isActive ? Theme.brand : Color.gray.opacity(0.3))
-                        .frame(width: 8, height: 8)
-                    Text(preset.name)
-                        .font(.system(.body, weight: isActive ? .medium : .regular))
-                        .lineLimit(1)
-                }
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(isActive ? Theme.brand : Color.gray.opacity(0.3))
+                    .frame(width: 8, height: 8)
+                Text(preset.name)
+                    .font(.system(.body, weight: isActive ? .medium : .regular))
+                    .lineLimit(1)
             }
-            .buttonStyle(.plain)
 
             Spacer()
 
-            if isHovered {
+            if isHovered && !isDefault {
                 HStack(spacing: 8) {
                     HoverButton(action: onRename) {
                         Image(systemName: "pencil")
@@ -197,6 +196,7 @@ struct PresetRowView: View {
                 .fill(isHovered ? Color.accentColor.opacity(0.1) : Color.clear)
         )
         .contentShape(Rectangle())
+        .onTapGesture(perform: onApply)
         .onHover { isHovered = $0 }
         .alert("Delete preset?", isPresented: $showConfirmDelete) {
             Button("Cancel", role: .cancel) {}
