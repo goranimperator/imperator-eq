@@ -7,6 +7,7 @@ struct ScrollWheelModifier: ViewModifier {
     func body(content: Content) -> some View {
         content.overlay(
             ScrollWheelReceiver(handler: handler)
+                .allowsHitTesting(false)
         )
     }
 }
@@ -27,9 +28,24 @@ struct ScrollWheelReceiver: NSViewRepresentable {
 
 final class ScrollWheelNSView: NSView {
     var handler: ((CGFloat) -> Void)?
+    private var monitor: Any?
 
-    override func scrollWheel(with event: NSEvent) {
-        handler?(event.scrollingDeltaY)
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+            guard let self, self.window != nil else { return event }
+            let loc = self.convert(event.locationInWindow, from: nil)
+            if self.bounds.contains(loc) {
+                self.handler?(event.scrollingDeltaY)
+            }
+            return event
+        }
+    }
+
+    override func removeFromSuperview() {
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+        super.removeFromSuperview()
     }
 }
 
@@ -110,8 +126,11 @@ struct EQBandColumn: View {
             }
             .frame(height: maxHeight)
             .contentShape(Rectangle())
+            .onTapGesture(count: 2) {
+                band.gain = 0.0
+            }
             .gesture(
-                DragGesture(minimumDistance: 0)
+                DragGesture(minimumDistance: 2)
                     .onChanged { value in
                         isDragging = true
                         let normalizedY = 1.0 - (value.location.y / maxHeight)
