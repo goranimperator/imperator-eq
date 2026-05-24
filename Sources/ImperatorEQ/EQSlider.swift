@@ -68,7 +68,7 @@ struct EQSlider: View {
             }
 
             Circle()
-                .fill(Color(white: 0.35))
+                .fill(Color.secondary)
                 .frame(width: thumbSize, height: thumbSize)
                 .shadow(color: .black.opacity(0.3), radius: 2, y: 1)
                 .position(x: thumbCenterX, y: centerY)

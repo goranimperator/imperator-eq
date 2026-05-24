@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct VisualizationView: View {
-    @StateObject private var engine = AudioEngine()
+    @EnvironmentObject var engine: AudioEngine
 
     var body: some View {
         VStack(spacing: 4) {
@@ -10,16 +10,6 @@ struct VisualizationView: View {
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.secondary)
                 Spacer()
-                HoverButton(action: {
-                    if engine.isRunning {
-                        engine.stop()
-                    } else {
-                        engine.start()
-                    }
-                }) {
-                    Image(systemName: engine.isRunning ? "stop.fill" : "play.fill")
-                        .font(.system(size: 10))
-                }
             }
 
             if engine.isRunning {
@@ -56,7 +46,7 @@ struct VisualizationView: View {
             .fill(Color.gray.opacity(0.1))
             .frame(height: 60)
             .overlay(
-                Text("Tap play to start")
+                Text("EQ disabled")
                     .font(.caption)
                     .foregroundStyle(.quaternary)
             )

@@ -7,16 +7,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var popover: NSPopover!
     private var eqStore: EQStore!
+    private var audioEngine: AudioEngine!
     private var eventMonitor: Any?
+    private var cancellables = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         eqStore = EQStore()
+        audioEngine = AudioEngine()
         setupStatusItem()
         setupPopover()
+        setupAudioBindings()
+
+        audioEngine.setup(store: eqStore)
 
         eventMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
             self?.closePopover()
         }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        audioEngine.stop()
     }
 
     private func setupStatusItem() {
@@ -41,14 +51,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         popover.behavior = .transient
         popover.animates = true
 
-        let quitAction = {
+        let quitAction = { [weak self] in
+            self?.audioEngine.stop()
             NSApplication.shared.terminate(nil)
         }
 
         popover.contentViewController = NSHostingController(
             rootView: PopoverContentView(quitAction: quitAction)
                 .environmentObject(eqStore)
+                .environmentObject(audioEngine)
         )
+    }
+
+    private func setupAudioBindings() {
+        eqStore.$bands
+            .dropFirst()
+            .sink { [weak self] bands in
+                self?.audioEngine.updateEQ(bands: bands)
+            }
+            .store(in: &cancellables)
+
+        eqStore.$volume
+            .dropFirst()
+            .sink { [weak self] volume in
+                self?.audioEngine.updateVolume(volume)
+            }
+            .store(in: &cancellables)
+
+        eqStore.$balance
+            .dropFirst()
+            .sink { [weak self] balance in
+                self?.audioEngine.updateBalance(balance)
+            }
+            .store(in: &cancellables)
+
+        eqStore.$isEnabled
+            .dropFirst()
+            .sink { [weak self] enabled in
+                self?.audioEngine.toggleEnabled(enabled)
+            }
+            .store(in: &cancellables)
     }
 
     @objc private func togglePopover() {

@@ -30,10 +30,10 @@ struct PopoverContentView: View {
     }
 
     private var headerView: some View {
-        HStack {
-            if let nsImage = SigilIcon.headerImage(size: 14) {
-                Image(nsImage: nsImage)
-            }
+        HStack(alignment: .center, spacing: 6) {
+            Image(systemName: "waveform")
+                .font(.system(size: 14))
+
             Text("Imperator EQ")
                 .font(.headline)
 

@@ -15,6 +15,7 @@ mkdir -p "${APP_BUNDLE}/Contents/Resources"
 
 cp "${BUILD_DIR}/release/${APP_NAME}" "${APP_BUNDLE}/Contents/MacOS/"
 cp "Resources/Info.plist" "${APP_BUNDLE}/Contents/"
+cp -R "Resources/BlackHole2ch.driver" "${APP_BUNDLE}/Contents/Resources/"
 
 echo "Signing app bundle..."
 codesign --sign - --force --deep "${APP_BUNDLE}"

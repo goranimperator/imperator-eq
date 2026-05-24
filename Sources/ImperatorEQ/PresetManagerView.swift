@@ -3,48 +3,65 @@ import SwiftUI
 struct PresetManagerView: View {
     @EnvironmentObject var store: EQStore
 
+    @State private var isExpanded = false
     @State private var showSaveSheet = false
     @State private var newPresetName = ""
     @State private var editingPreset: EQPreset?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("PRESETS")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
-
-                Spacer()
-
-                HoverButton(action: { showSaveSheet = true }) {
-                    HStack(spacing: 3) {
-                        Image(systemName: "plus")
-                            .font(.system(size: 10))
-                        Text("Save")
-                            .font(.caption)
-                    }
+        VStack(alignment: .leading, spacing: 0) {
+            Button(action: { withAnimation(.easeInOut(duration: 0.2)) { isExpanded.toggle() } }) {
+                HStack {
+                    Text("PRESETS")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
                 }
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
 
-            if store.presets.isEmpty {
-                Text("No saved presets")
-                    .font(.caption)
-                    .foregroundStyle(.quaternary)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.vertical, 8)
-            } else {
-                VStack(spacing: 4) {
-                    ForEach(store.presets) { preset in
-                        PresetRowView(
-                            preset: preset,
-                            isActive: store.activePresetId == preset.id,
-                            onApply: { store.applyPreset(preset) },
-                            onUpdate: { store.updatePreset(preset) },
-                            onDelete: { store.deletePreset(preset) },
-                            onRename: { editingPreset = preset }
-                        )
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Spacer()
+                        HoverButton(action: { showSaveSheet = true }) {
+                            HStack(spacing: 3) {
+                                Image(systemName: "plus")
+                                    .font(.system(size: 10))
+                                Text("Save")
+                                    .font(.caption)
+                            }
+                        }
+                    }
+
+                    if store.presets.isEmpty {
+                        Text("No saved presets")
+                            .font(.caption)
+                            .foregroundStyle(.quaternary)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .padding(.vertical, 8)
+                    } else {
+                        VStack(spacing: 4) {
+                            ForEach(store.presets) { preset in
+                                PresetRowView(
+                                    preset: preset,
+                                    isActive: store.activePresetId == preset.id,
+                                    onApply: { store.applyPreset(preset) },
+                                    onUpdate: { store.updatePreset(preset) },
+                                    onDelete: { store.deletePreset(preset) },
+                                    onRename: { editingPreset = preset }
+                                )
+                            }
+                        }
                     }
                 }
+                .padding(.top, 8)
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
         .sheet(isPresented: $showSaveSheet) {

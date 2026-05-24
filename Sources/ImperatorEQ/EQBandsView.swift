@@ -1,59 +1,4 @@
 import SwiftUI
-import AppKit
-
-struct ScrollWheelModifier: ViewModifier {
-    let handler: (CGFloat) -> Void
-
-    func body(content: Content) -> some View {
-        content.overlay(
-            ScrollWheelReceiver(handler: handler)
-                .allowsHitTesting(false)
-        )
-    }
-}
-
-struct ScrollWheelReceiver: NSViewRepresentable {
-    let handler: (CGFloat) -> Void
-
-    func makeNSView(context: Context) -> ScrollWheelNSView {
-        let view = ScrollWheelNSView()
-        view.handler = handler
-        return view
-    }
-
-    func updateNSView(_ nsView: ScrollWheelNSView, context: Context) {
-        nsView.handler = handler
-    }
-}
-
-final class ScrollWheelNSView: NSView {
-    var handler: ((CGFloat) -> Void)?
-    private var monitor: Any?
-
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
-            guard let self, self.window != nil else { return event }
-            let loc = self.convert(event.locationInWindow, from: nil)
-            if self.bounds.contains(loc) {
-                self.handler?(event.scrollingDeltaY)
-            }
-            return event
-        }
-    }
-
-    override func removeFromSuperview() {
-        if let monitor { NSEvent.removeMonitor(monitor) }
-        monitor = nil
-        super.removeFromSuperview()
-    }
-}
-
-extension View {
-    func onScrollWheel(_ handler: @escaping (CGFloat) -> Void) -> some View {
-        modifier(ScrollWheelModifier(handler: handler))
-    }
-}
 
 struct EQBandsView: View {
     @Binding var bands: [EQBand]
@@ -118,7 +63,7 @@ struct EQBandColumn: View {
 
                 let fillHeight = normalizedGain * maxHeight
                 RoundedRectangle(cornerRadius: 3)
-                    .fill(Color(white: 0.35))
+                    .fill(Color.secondary)
                     .frame(width: width * 0.5, height: 14)
                     .shadow(color: .black.opacity(0.35), radius: 2, y: 1)
                     .offset(y: -(fillHeight - 7))
@@ -141,10 +86,6 @@ struct EQBandColumn: View {
                         isDragging = false
                     }
             )
-            .onScrollWheel { delta in
-                let step: Float = 0.125
-                band.gain = max(-maxGain, min(maxGain, band.gain - Float(delta) * step))
-            }
 
             Text(band.frequency)
                 .font(.system(size: 9))

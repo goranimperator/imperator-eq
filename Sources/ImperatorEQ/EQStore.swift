@@ -43,6 +43,24 @@ final class EQStore: ObservableObject {
 
     private let presetsURL: URL
 
+    static let defaultPresets: [EQPreset] = [
+        EQPreset(name: "Bass Boost", bands: defaultFrequencies.enumerated().map { i, freq in
+            EQBand(frequency: freq, gain: [8, 6, 4, 2, 0, 0, 0, 0, 0, 0][i])
+        }),
+        EQPreset(name: "Treble Boost", bands: defaultFrequencies.enumerated().map { i, freq in
+            EQBand(frequency: freq, gain: [0, 0, 0, 0, 0, 2, 4, 5, 6, 7][i])
+        }),
+        EQPreset(name: "Vocal Clarity", bands: defaultFrequencies.enumerated().map { i, freq in
+            EQBand(frequency: freq, gain: [-2, -1, 0, 3, 5, 5, 3, 1, 0, -1][i])
+        }),
+        EQPreset(name: "Rock", bands: defaultFrequencies.enumerated().map { i, freq in
+            EQBand(frequency: freq, gain: [5, 4, 2, -1, -2, -1, 2, 4, 5, 6][i])
+        }),
+        EQPreset(name: "Night Mode", bands: defaultFrequencies.enumerated().map { i, freq in
+            EQBand(frequency: freq, gain: [-4, -2, 0, 2, 3, 3, 2, 0, -2, -4][i])
+        }),
+    ]
+
     init() {
         bands = Self.defaultFrequencies.map { EQBand(frequency: $0) }
 
@@ -52,6 +70,10 @@ final class EQStore: ObservableObject {
         presetsURL = appDir.appendingPathComponent("presets.json")
 
         loadPresets()
+        if presets.isEmpty {
+            presets = Self.defaultPresets
+            persistPresets()
+        }
     }
 
     func resetBands() {
