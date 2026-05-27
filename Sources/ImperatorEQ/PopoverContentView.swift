@@ -19,6 +19,7 @@ struct PopoverContentView: View {
                         VisualizationView()
                     }
                     presetSection
+                    outputDeviceSection
                 }
                 .padding(16)
             }
@@ -155,6 +156,10 @@ struct PopoverContentView: View {
 
     private var presetSection: some View {
         PresetManagerView()
+    }
+
+    private var outputDeviceSection: some View {
+        OutputDeviceView()
     }
 
     private var footerView: some View {

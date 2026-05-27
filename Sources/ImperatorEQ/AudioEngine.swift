@@ -18,10 +18,18 @@ private final class RenderContext {
     }
 }
 
+struct OutputDevice: Identifiable, Equatable {
+    let id: AudioDeviceID
+    let uid: String
+    let name: String
+}
+
 @MainActor
 final class AudioEngine: ObservableObject {
     @Published var levels: [Float] = Array(repeating: 0.0, count: 128)
     @Published var isRunning = false
+    @Published var availableOutputDevices: [OutputDevice] = []
+    @Published var activeOutputUID: String?
 
     private var ioUnit: AudioUnit?
     private var eqUnit: AudioUnit?
@@ -31,8 +39,11 @@ final class AudioEngine: ObservableObject {
     private var realOutputDeviceID: AudioDeviceID?
     private var blackHoleDeviceID: AudioDeviceID?
     private var vizTimer: Timer?
-    private var deviceListenerInstalled = false
-    private nonisolated(unsafe) var deviceListenerBlock: AudioObjectPropertyListenerBlock?
+    private var defaultOutputListenerInstalled = false
+    private nonisolated(unsafe) var defaultOutputListenerBlock: AudioObjectPropertyListenerBlock?
+    private var manualOutputUID: String?
+    private var deviceListListenerInstalled = false
+    private nonisolated(unsafe) var deviceListListenerBlock: AudioObjectPropertyListenerBlock?
 
     private let blackHoleUID = "BlackHole2ch_UID"
     private let aggregateUID = "ImperatorEQ_Aggregate"
@@ -41,6 +52,32 @@ final class AudioEngine: ObservableObject {
     private weak var store: EQStore?
 
     // MARK: - Public API
+
+    func refreshOutputDevices() {
+        let knownUIDs: Set<String> = [blackHoleUID, aggregateUID]
+        var devices: [OutputDevice] = []
+        for deviceID in getAllDeviceIDs() {
+            guard let uid = getDeviceUID(deviceID) else { continue }
+            if knownUIDs.contains(uid) { continue }
+            guard getOutputChannelCount(deviceID) > 0 else { continue }
+            let transport = getDeviceTransportType(deviceID)
+            // Skip monitors
+            if transport == kAudioDeviceTransportTypeHDMI || transport == kAudioDeviceTransportTypeDisplayPort { continue }
+            let name = getDeviceName(deviceID) ?? "Unknown"
+            devices.append(OutputDevice(id: deviceID, uid: uid, name: name))
+        }
+        availableOutputDevices = devices
+    }
+
+    func selectOutputDevice(uid: String) {
+        guard let store, uid != activeOutputUID else { return }
+        NSLog("Manual device switch to %@", uid as NSString)
+        stop()
+        // Temporarily override preferred by setting the UID before start
+        manualOutputUID = uid
+        start(store: store)
+        manualOutputUID = nil
+    }
 
     func setup(store: EQStore) {
         self.store = store
@@ -69,17 +106,19 @@ final class AudioEngine: ObservableObject {
         }
         blackHoleDeviceID = bhDeviceID
 
-        // Use current default output as the real target (respects headphones/BT)
-        let currentDefault = getDefaultOutputDevice()
+        // Determine output device: manual > BT > built-in > fallback
         let realID: AudioDeviceID
-        if let cd = currentDefault, getDeviceUID(cd) != blackHoleUID {
-            realID = cd
-        } else if let found = findRealOutputDevice() {
+        if let uid = manualOutputUID, let found = findDeviceByUID(uid), getOutputChannelCount(found) > 0 {
             realID = found
+        } else if let preferred = findPreferredOutputDevice() {
+            realID = preferred
+        } else if let cd = getDefaultOutputDevice(), getDeviceUID(cd) != blackHoleUID, getDeviceUID(cd) != aggregateUID {
+            realID = cd
         } else {
             NSLog("No real output device found")
             return
         }
+        activeOutputUID = getDeviceUID(realID)
         realOutputDeviceID = realID
         NSLog("BlackHole=%d, Output=%d", bhDeviceID, realID)
 
@@ -108,6 +147,8 @@ final class AudioEngine: ObservableObject {
             return
         }
         aggregateDeviceID = aggID
+        NSLog("Aggregate=%d, outputUID=%@, inputUID=%@", aggID, realUID as NSString, blackHoleUID as NSString)
+        NSLog("Aggregate output channels: %d", getOutputChannelCount(aggID))
 
         // Create AUHAL
         var ioDesc = AudioComponentDescription(
@@ -250,6 +291,12 @@ final class AudioEngine: ObservableObject {
         s = AudioUnitInitialize(ioU)
         NSLog("AUHAL init: %d", s)
 
+        // Debug: check actual format on AUHAL output
+        var actualFmt = AudioStreamBasicDescription()
+        var actualSize = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+        AudioUnitGetProperty(ioU, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 0, &actualFmt, &actualSize)
+        NSLog("AUHAL output format: %.0fHz, %d ch, %d bits", actualFmt.mSampleRate, actualFmt.mChannelsPerFrame, actualFmt.mBitsPerChannel)
+
         // Configure EQ bands AFTER init (init resets parameters)
         for i in 0..<10 {
             let idx = AudioUnitParameterID(i)
@@ -273,7 +320,9 @@ final class AudioEngine: ObservableObject {
 
         isRunning = true
         installDeviceListener()
+        installDeviceListListener()
         startVizTimer()
+        refreshOutputDevices()
         NSLog("Engine running")
     }
 
@@ -281,6 +330,7 @@ final class AudioEngine: ObservableObject {
         vizTimer?.invalidate()
         vizTimer = nil
         removeDeviceListener()
+        removeDeviceListListener()
 
         if let ioU = ioUnit {
             AudioOutputUnitStop(ioU)
@@ -362,7 +412,7 @@ final class AudioEngine: ObservableObject {
     // MARK: - Device Change Monitoring
 
     private func installDeviceListener() {
-        guard !deviceListenerInstalled else { return }
+        guard !defaultOutputListenerInstalled else { return }
         var addr = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDefaultOutputDevice,
             mScope: kAudioObjectPropertyScopeGlobal,
@@ -371,15 +421,15 @@ final class AudioEngine: ObservableObject {
         let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
             DispatchQueue.main.async { self?.handleDeviceChange() }
         }
-        deviceListenerBlock = block
+        defaultOutputListenerBlock = block
         AudioObjectAddPropertyListenerBlock(
             AudioObjectID(kAudioObjectSystemObject), &addr, DispatchQueue.main, block
         )
-        deviceListenerInstalled = true
+        defaultOutputListenerInstalled = true
     }
 
     private func removeDeviceListener() {
-        guard deviceListenerInstalled, let block = deviceListenerBlock else { return }
+        guard defaultOutputListenerInstalled, let block = defaultOutputListenerBlock else { return }
         var addr = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDefaultOutputDevice,
             mScope: kAudioObjectPropertyScopeGlobal,
@@ -388,20 +438,73 @@ final class AudioEngine: ObservableObject {
         AudioObjectRemovePropertyListenerBlock(
             AudioObjectID(kAudioObjectSystemObject), &addr, DispatchQueue.main, block
         )
-        deviceListenerBlock = nil
-        deviceListenerInstalled = false
+        defaultOutputListenerBlock = nil
+        defaultOutputListenerInstalled = false
+    }
+
+    private func installDeviceListListener() {
+        guard !deviceListListenerInstalled else { return }
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            // Debounce: devices can fire multiple notifications on connect/disconnect
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                self?.handleDeviceListChange()
+            }
+        }
+        deviceListListenerBlock = block
+        AudioObjectAddPropertyListenerBlock(
+            AudioObjectID(kAudioObjectSystemObject), &addr, DispatchQueue.main, block
+        )
+        deviceListListenerInstalled = true
+    }
+
+    private func removeDeviceListListener() {
+        guard deviceListListenerInstalled, let block = deviceListListenerBlock else { return }
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        AudioObjectRemovePropertyListenerBlock(
+            AudioObjectID(kAudioObjectSystemObject), &addr, DispatchQueue.main, block
+        )
+        deviceListListenerBlock = nil
+        deviceListListenerInstalled = false
+    }
+
+    private func handleDeviceListChange() {
+        guard isRunning, let store else { return }
+
+        refreshOutputDevices()
+
+        guard let preferred = findPreferredOutputDevice() else { return }
+        let preferredUID = getDeviceUID(preferred)
+
+        // No change needed if same device
+        if preferredUID == activeOutputUID { return }
+
+        let name = getDeviceName(preferred) ?? "Unknown"
+        NSLog("Auto-switching output: %@ → %@", (activeOutputUID ?? "?") as NSString, name as NSString)
+
+        stop()
+        start(store: store)
     }
 
     private func handleDeviceChange() {
-        guard isRunning, let store else { return }
+        guard isRunning else { return }
+        guard let bhID = blackHoleDeviceID else { return }
         guard let newDefault = getDefaultOutputDevice() else { return }
         let newUID = getDeviceUID(newDefault)
 
-        // If default changed away from BlackHole (e.g., headphones plugged in)
         if newUID != blackHoleUID {
-            NSLog("Output device changed to %@, restarting engine", (newUID ?? "?") as NSString)
-            stop()
-            start(store: store)
+            // Something changed default away from BlackHole (monitor plugged in, etc.)
+            // Just reclaim it — our aggregate and engine are still valid
+            NSLog("Default changed to %@, reclaiming BlackHole", (newUID ?? "?") as NSString)
+            setDefaultOutputDevice(bhID)
         }
     }
 
@@ -442,16 +545,48 @@ final class AudioEngine: ObservableObject {
 
     // MARK: - CoreAudio Helpers
 
-    private func findRealOutputDevice() -> AudioDeviceID? {
-        let deviceIDs = getAllDeviceIDs()
-        for deviceID in deviceIDs {
-            let uid = getDeviceUID(deviceID)
-            if uid == blackHoleUID || uid == aggregateUID { continue }
-            if getOutputChannelCount(deviceID) > 0 {
-                return deviceID
+    private func findPreferredOutputDevice() -> AudioDeviceID? {
+        let knownUIDs: Set<String> = [blackHoleUID, aggregateUID]
+        var builtIn: AudioDeviceID?
+        var bluetooth: AudioDeviceID?
+        var fallback: AudioDeviceID?
+
+        for deviceID in getAllDeviceIDs() {
+            guard let uid = getDeviceUID(deviceID), !knownUIDs.contains(uid) else { continue }
+            guard getOutputChannelCount(deviceID) > 0 else { continue }
+
+            let transport = getDeviceTransportType(deviceID)
+            switch transport {
+            case kAudioDeviceTransportTypeBluetooth, kAudioDeviceTransportTypeBluetoothLE:
+                if bluetooth == nil { bluetooth = deviceID }
+            case kAudioDeviceTransportTypeBuiltIn:
+                if builtIn == nil { builtIn = deviceID }
+            case kAudioDeviceTransportTypeHDMI, kAudioDeviceTransportTypeDisplayPort, kAudioDeviceTransportTypeAirPlay:
+                break // Ignore monitors and AirPlay
+            default:
+                if fallback == nil { fallback = deviceID } // USB DAC, etc.
             }
         }
-        return nil
+
+        let chosen = bluetooth ?? builtIn ?? fallback
+        if let chosen {
+            let name = getDeviceName(chosen) ?? "Unknown"
+            let transport = getDeviceTransportType(chosen)
+            NSLog("Preferred output: %@ (transport=0x%08X)", name as NSString, transport)
+        }
+        return chosen
+    }
+
+    private func getDeviceTransportType(_ deviceID: AudioDeviceID) -> UInt32 {
+        var transportType: UInt32 = 0
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyTransportType,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        AudioObjectGetPropertyData(deviceID, &addr, 0, nil, &size, &transportType)
+        return transportType
     }
 
     private func getAllDeviceIDs() -> [AudioDeviceID] {
@@ -470,6 +605,18 @@ final class AudioEngine: ObservableObject {
             AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &propSize, &ids
         ) == noErr else { return [] }
         return ids
+    }
+
+    private func getDeviceName(_ deviceID: AudioDeviceID) -> String? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioObjectPropertyName,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var propSize = UInt32(MemoryLayout<Unmanaged<CFString>>.size)
+        var name: Unmanaged<CFString>?
+        guard AudioObjectGetPropertyData(deviceID, &address, 0, nil, &propSize, &name) == noErr else { return nil }
+        return name?.takeUnretainedValue() as String?
     }
 
     private func getOutputChannelCount(_ deviceID: AudioDeviceID) -> Int {
