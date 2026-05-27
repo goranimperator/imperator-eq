@@ -11,6 +11,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var eventMonitor: Any?
     private var cancellables = Set<AnyCancellable>()
 
+    private let popoverHeight: CGFloat = 495
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         eqStore = EQStore()
         audioEngine = AudioEngine()
@@ -48,7 +50,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setupPopover() {
         popover = NSPopover()
-        popover.contentSize = NSSize(width: 380, height: 580)
+        popover.contentSize = NSSize(width: 380, height: popoverHeight)
         popover.behavior = .transient
         popover.animates = true
 
@@ -62,6 +64,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 .environmentObject(eqStore)
                 .environmentObject(audioEngine)
         )
+
     }
 
     private func setupAudioBindings() {

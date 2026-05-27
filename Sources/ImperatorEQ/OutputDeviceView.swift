@@ -13,11 +13,6 @@ struct OutputDeviceView: View {
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(.secondary)
                     Spacer()
-                    if !isExpanded, let name = activeDeviceName {
-                        Text(name)
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                    }
                     Image(systemName: "chevron.right")
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.secondary)
@@ -41,10 +36,6 @@ struct OutputDeviceView: View {
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
-    }
-
-    private var activeDeviceName: String? {
-        engine.availableOutputDevices.first { $0.uid == engine.activeOutputUID }?.name
     }
 }
 

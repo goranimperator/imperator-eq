@@ -11,15 +11,11 @@ struct PopoverContentView: View {
             Divider()
             ScrollView {
                 VStack(spacing: 16) {
+                    outputDeviceSection
                     volumeSection
                     balanceSection
                     eqSection
-                    visualizationToggle
-                    if store.showVisualization {
-                        VisualizationView()
-                    }
                     presetSection
-                    outputDeviceSection
                 }
                 .padding(16)
             }
@@ -136,21 +132,6 @@ struct PopoverContentView: View {
             return "L \(Int(abs(store.balance) * 100))%"
         } else {
             return "R \(Int(store.balance * 100))%"
-        }
-    }
-
-    private var visualizationToggle: some View {
-        HStack {
-            Text("Audio Visualization")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Spacer()
-            Toggle("", isOn: $store.showVisualization)
-                .toggleStyle(.switch)
-                .tint(Theme.brand)
-                .labelsHidden()
-                .scaleEffect(0.55)
-                .frame(width: 36, height: 20)
         }
     }
 
