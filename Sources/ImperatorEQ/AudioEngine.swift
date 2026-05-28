@@ -183,10 +183,6 @@ final class AudioEngine: ObservableObject {
     private var manualOutputUID: String?
     private var deviceListListenerInstalled = false
     private nonisolated(unsafe) var deviceListListenerBlock: AudioObjectPropertyListenerBlock?
-    private var volumeForwarderInstalled = false
-    private nonisolated(unsafe) var volumeForwarderBlock: AudioObjectPropertyListenerBlock?
-    private nonisolated(unsafe) var isForwardingVolume = false
-
     private let blackHoleUID = "BlackHole2ch_UID"
     private let aggregateUID = "ImperatorEQ_Aggregate"
     private let eqFrequencies: [Float] = [32, 64, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]
@@ -468,13 +464,11 @@ final class AudioEngine: ObservableObject {
         isRunning = true
         installDeviceListener()
         installDeviceListListener()
-        installVolumeForwarder()
         refreshOutputDevices()
         NSLog("Engine running")
     }
 
     func stop() {
-        removeVolumeForwarder()
         removeDeviceListener()
         removeDeviceListListener()
 
@@ -610,110 +604,6 @@ final class AudioEngine: ObservableObject {
         )
         deviceListListenerBlock = nil
         deviceListListenerInstalled = false
-    }
-
-    // MARK: - Volume Forwarding
-    // When BlackHole is the default output, macOS volume keys adjust BlackHole's volume.
-    // We intercept those changes, forward them to the real output device, and reset
-    // BlackHole to 1.0/unmuted so audio always flows at full level.
-
-    private func installVolumeForwarder() {
-        guard !volumeForwarderInstalled, let bhID = blackHoleDeviceID else { return }
-
-        let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
-            DispatchQueue.main.async { self?.handleBlackHoleVolumeChange() }
-        }
-        volumeForwarderBlock = block
-
-        // Listen for volume and mute changes on BlackHole output (master element)
-        let selectors: [AudioObjectPropertySelector] = [
-            kAudioDevicePropertyVolumeScalar,
-            kAudioDevicePropertyMute,
-        ]
-        for selector in selectors {
-            var addr = AudioObjectPropertyAddress(
-                mSelector: selector,
-                mScope: kAudioDevicePropertyScopeOutput,
-                mElement: kAudioObjectPropertyElementMain
-            )
-            guard AudioObjectHasProperty(bhID, &addr) else { continue }
-            AudioObjectAddPropertyListenerBlock(bhID, &addr, DispatchQueue.main, block)
-        }
-        volumeForwarderInstalled = true
-    }
-
-    private func removeVolumeForwarder() {
-        guard volumeForwarderInstalled, let block = volumeForwarderBlock, let bhID = blackHoleDeviceID else { return }
-        let selectors: [AudioObjectPropertySelector] = [
-            kAudioDevicePropertyVolumeScalar,
-            kAudioDevicePropertyMute,
-        ]
-        for selector in selectors {
-            var addr = AudioObjectPropertyAddress(
-                mSelector: selector,
-                mScope: kAudioDevicePropertyScopeOutput,
-                mElement: kAudioObjectPropertyElementMain
-            )
-            AudioObjectRemovePropertyListenerBlock(bhID, &addr, DispatchQueue.main, block)
-        }
-        volumeForwarderBlock = nil
-        volumeForwarderInstalled = false
-    }
-
-    private func handleBlackHoleVolumeChange() {
-        guard !isForwardingVolume, let bhID = blackHoleDeviceID, let realID = realOutputDeviceID else { return }
-        isForwardingVolume = true
-        defer { isForwardingVolume = false }
-
-        // Read BlackHole's current volume
-        var volAddr = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyVolumeScalar,
-            mScope: kAudioDevicePropertyScopeOutput,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        if AudioObjectHasProperty(bhID, &volAddr) {
-            var vol: Float32 = 1.0
-            var size = UInt32(MemoryLayout<Float32>.size)
-            if AudioObjectGetPropertyData(bhID, &volAddr, 0, nil, &size, &vol) == noErr, vol < 1.0 {
-                // Forward to real output device
-                var realVolAddr = AudioObjectPropertyAddress(
-                    mSelector: kAudioDevicePropertyVolumeScalar,
-                    mScope: kAudioDevicePropertyScopeOutput,
-                    mElement: kAudioObjectPropertyElementMain
-                )
-                if AudioObjectHasProperty(realID, &realVolAddr) {
-                    AudioObjectSetPropertyData(realID, &realVolAddr, 0, nil, size, &vol)
-                }
-                // Reset BlackHole to 1.0
-                var full: Float32 = 1.0
-                AudioObjectSetPropertyData(bhID, &volAddr, 0, nil, size, &full)
-            }
-        }
-
-        // Read BlackHole's mute state
-        var muteAddr = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyMute,
-            mScope: kAudioDevicePropertyScopeOutput,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        if AudioObjectHasProperty(bhID, &muteAddr) {
-            var muted: UInt32 = 0
-            var size = UInt32(MemoryLayout<UInt32>.size)
-            if AudioObjectGetPropertyData(bhID, &muteAddr, 0, nil, &size, &muted) == noErr, muted != 0 {
-                // Forward mute to real output
-                var realMuteAddr = AudioObjectPropertyAddress(
-                    mSelector: kAudioDevicePropertyMute,
-                    mScope: kAudioDevicePropertyScopeOutput,
-                    mElement: kAudioObjectPropertyElementMain
-                )
-                if AudioObjectHasProperty(realID, &realMuteAddr) {
-                    AudioObjectSetPropertyData(realID, &realMuteAddr, 0, nil, size, &muted)
-                }
-                // Reset BlackHole to unmuted
-                var unmuted: UInt32 = 0
-                AudioObjectSetPropertyData(bhID, &muteAddr, 0, nil, size, &unmuted)
-            }
-        }
     }
 
     private func handleDeviceListChange() {
@@ -954,14 +844,13 @@ final class AudioEngine: ObservableObject {
     }
 
     private func ensureDeviceUnmuted(_ deviceID: AudioDeviceID) {
-        // Unmute
+        // Unmute if muted
         var muteAddr = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyMute,
             mScope: kAudioDevicePropertyScopeOutput,
             mElement: kAudioObjectPropertyElementMain
         )
-        let hasMute = AudioObjectHasProperty(deviceID, &muteAddr)
-        if hasMute {
+        if AudioObjectHasProperty(deviceID, &muteAddr) {
             var muted: UInt32 = 0
             var muteSize = UInt32(MemoryLayout<UInt32>.size)
             AudioObjectGetPropertyData(deviceID, &muteAddr, 0, nil, &muteSize, &muted)
@@ -972,21 +861,21 @@ final class AudioEngine: ObservableObject {
             }
         }
 
-        // Set volume to 1.0
+        // Only recover volume if stuck at zero (from previous crash/mute).
+        // Don't touch it otherwise — let the user's volume keys work normally.
         var volAddr = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyVolumeScalar,
             mScope: kAudioDevicePropertyScopeOutput,
             mElement: kAudioObjectPropertyElementMain
         )
-        let hasVol = AudioObjectHasProperty(deviceID, &volAddr)
-        if hasVol {
+        if AudioObjectHasProperty(deviceID, &volAddr) {
             var vol: Float32 = 0
             var volSize = UInt32(MemoryLayout<Float32>.size)
             AudioObjectGetPropertyData(deviceID, &volAddr, 0, nil, &volSize, &vol)
-            if vol < 1.0 {
-                var fullVol: Float32 = 1.0
-                AudioObjectSetPropertyData(deviceID, &volAddr, 0, nil, volSize, &fullVol)
-                NSLog("Set device %d volume from %.2f to 1.0", deviceID, vol)
+            if vol < 0.01 {
+                var defaultVol: Float32 = 0.5
+                AudioObjectSetPropertyData(deviceID, &volAddr, 0, nil, volSize, &defaultVol)
+                NSLog("Recovered device %d volume from 0 to 0.5", deviceID)
             }
         }
     }
