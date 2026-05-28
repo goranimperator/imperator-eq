@@ -50,7 +50,6 @@ final class EQStore: ObservableObject {
     @Published var volume: Float = 1.0
     @Published var balance: Float = 0.0
     @Published var isEnabled: Bool = true
-    @Published var showVisualization: Bool = false
     @Published var presets: [EQPreset] = []
     @Published var activePresetId: UUID?
 
@@ -157,7 +156,6 @@ final class EQStore: ObservableObject {
         var volume: Float
         var balance: Float
         var isEnabled: Bool
-        var showVisualization: Bool
         var activePresetId: UUID?
     }
 
@@ -167,7 +165,6 @@ final class EQStore: ObservableObject {
             volume: volume,
             balance: balance,
             isEnabled: isEnabled,
-            showVisualization: showVisualization,
             activePresetId: activePresetId
         )
         guard let data = try? JSONEncoder().encode(state) else { return }
@@ -181,7 +178,6 @@ final class EQStore: ObservableObject {
         volume = state.volume
         balance = state.balance
         isEnabled = state.isEnabled
-        showVisualization = state.showVisualization
         activePresetId = state.activePresetId
     }
 

@@ -9,9 +9,6 @@ private final class RenderContext {
     var eqUnit: AudioUnit
     var volume: Float = 1.0
     var balance: Float = 0.0
-    var vizLevels = [Float](repeating: 0, count: 128)
-    var vizReady = false
-
     init(ioUnit: AudioUnit, eqUnit: AudioUnit) {
         self.ioUnit = ioUnit
         self.eqUnit = eqUnit
@@ -26,7 +23,6 @@ struct OutputDevice: Identifiable, Equatable {
 
 @MainActor
 final class AudioEngine: ObservableObject {
-    @Published var levels: [Float] = Array(repeating: 0.0, count: 128)
     @Published var isRunning = false
     @Published var availableOutputDevices: [OutputDevice] = []
     @Published var activeOutputUID: String?
@@ -38,7 +34,6 @@ final class AudioEngine: ObservableObject {
     private var aggregateDeviceID: AudioDeviceID = 0
     private var realOutputDeviceID: AudioDeviceID?
     private var blackHoleDeviceID: AudioDeviceID?
-    private var vizTimer: Timer?
     private var defaultOutputListenerInstalled = false
     private nonisolated(unsafe) var defaultOutputListenerBlock: AudioObjectPropertyListenerBlock?
     private var manualOutputUID: String?
@@ -261,22 +256,6 @@ final class AudioEngine: ObservableObject {
                     for i in 0..<frames { right[i] *= rightGain }
                 }
 
-                // Capture visualization (mix L+R)
-                if bufs.count >= 1, let left = bufs[0].mData?.assumingMemoryBound(to: Float.self) {
-                    let bandCount = 128
-                    let bandSize = max(1, frames / bandCount)
-                    for b in 0..<bandCount {
-                        let start = b * bandSize
-                        let end = min(start + bandSize, frames)
-                        guard end > start else { ctx.vizLevels[b] = 0; continue }
-                        var sum: Float = 0
-                        for j in start..<end { sum += abs(left[j]) }
-                        let avg = sum / Float(end - start)
-                        ctx.vizLevels[b] = min(avg * 9.4, 1.0)
-                    }
-                    ctx.vizReady = true
-                }
-
                 return noErr
             },
             inputProcRefCon: refCon
@@ -321,14 +300,11 @@ final class AudioEngine: ObservableObject {
         isRunning = true
         installDeviceListener()
         installDeviceListListener()
-        startVizTimer()
         refreshOutputDevices()
         NSLog("Engine running")
     }
 
     func stop() {
-        vizTimer?.invalidate()
-        vizTimer = nil
         removeDeviceListener()
         removeDeviceListListener()
 
@@ -353,7 +329,6 @@ final class AudioEngine: ObservableObject {
         restoreOriginalOutput()
 
         isRunning = false
-        levels = Array(repeating: 0, count: 128)
         NSLog("Engine stopped")
     }
 
@@ -394,18 +369,6 @@ final class AudioEngine: ObservableObject {
         for i in 0..<10 {
             AudioUnitSetParameter(eqU, 1000 + AudioUnitParameterID(i),
                                    kAudioUnitScope_Global, 0, enabled ? 0 : 1, 0)
-        }
-    }
-
-    // MARK: - Visualization
-
-    private func startVizTimer() {
-        vizTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                guard let self, let ctx = self.context, ctx.vizReady else { return }
-                self.levels = ctx.vizLevels
-                ctx.vizReady = false
-            }
         }
     }
 
