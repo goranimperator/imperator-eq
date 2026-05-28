@@ -15,6 +15,150 @@ private final class RenderContext {
     }
 }
 
+// MARK: - Crash Recovery
+
+/// Persists the real output device UID to disk while the engine is running.
+/// If the app is force-killed (SIGKILL), the next launch can read this file
+/// and restore audio output from BlackHole back to the real device.
+private enum AudioRecovery {
+    static let recoveryURL: URL = {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        return appSupport.appendingPathComponent("ImperatorEQ/audio_recovery.txt")
+    }()
+
+    static func saveRealOutputUID(_ uid: String) {
+        try? uid.write(to: recoveryURL, atomically: true, encoding: .utf8)
+    }
+
+    static func clear() {
+        try? FileManager.default.removeItem(at: recoveryURL)
+    }
+
+    static func recoverIfNeeded() {
+        guard let savedUID = try? String(contentsOf: recoveryURL, encoding: .utf8),
+              !savedUID.isEmpty else { return }
+
+        // Previous instance didn't shut down cleanly — check if BlackHole is still default
+        var deviceID = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        guard AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size, &deviceID
+        ) == noErr else {
+            clear()
+            return
+        }
+
+        // Get current default UID
+        var uidAddr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyDeviceUID,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var uidSize = UInt32(MemoryLayout<Unmanaged<CFString>>.size)
+        var uidRef: Unmanaged<CFString>?
+        guard AudioObjectGetPropertyData(deviceID, &uidAddr, 0, nil, &uidSize, &uidRef) == noErr,
+              let currentUID = uidRef?.takeUnretainedValue() as String? else {
+            clear()
+            return
+        }
+
+        if currentUID == "BlackHole2ch_UID" || currentUID == "ImperatorEQ_Aggregate" {
+            NSLog("Recovery: BlackHole stuck as default, restoring to %@", savedUID)
+            // Find device by saved UID and restore
+            restoreDevice(uid: savedUID)
+        }
+        // Also destroy any leftover aggregate
+        destroyStaleAggregate()
+        clear()
+    }
+
+    private static func restoreDevice(uid: String) {
+        var propAddr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var propSize: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(
+            AudioObjectID(kAudioObjectSystemObject), &propAddr, 0, nil, &propSize
+        ) == noErr else { return }
+        let count = Int(propSize) / MemoryLayout<AudioDeviceID>.size
+        var ids = [AudioDeviceID](repeating: 0, count: count)
+        guard AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &propAddr, 0, nil, &propSize, &ids
+        ) == noErr else { return }
+
+        for id in ids {
+            var uidAddr = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyDeviceUID,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            var uidSize = UInt32(MemoryLayout<Unmanaged<CFString>>.size)
+            var uidRef: Unmanaged<CFString>?
+            guard AudioObjectGetPropertyData(id, &uidAddr, 0, nil, &uidSize, &uidRef) == noErr,
+                  let devUID = uidRef?.takeUnretainedValue() as String?,
+                  devUID == uid else { continue }
+
+            // Found it — set as default
+            var devID = id
+            let size = UInt32(MemoryLayout<AudioDeviceID>.size)
+            var outAddr = AudioObjectPropertyAddress(
+                mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            AudioObjectSetPropertyData(AudioObjectID(kAudioObjectSystemObject), &outAddr, 0, nil, size, &devID)
+            var sysAddr = AudioObjectPropertyAddress(
+                mSelector: kAudioHardwarePropertyDefaultSystemOutputDevice,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            AudioObjectSetPropertyData(AudioObjectID(kAudioObjectSystemObject), &sysAddr, 0, nil, size, &devID)
+            NSLog("Recovery: restored output to %@ (device %d)", uid, id)
+            return
+        }
+        NSLog("Recovery: device %@ not found, cannot restore", uid)
+    }
+
+    private static func destroyStaleAggregate() {
+        var propAddr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var propSize: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(
+            AudioObjectID(kAudioObjectSystemObject), &propAddr, 0, nil, &propSize
+        ) == noErr else { return }
+        let count = Int(propSize) / MemoryLayout<AudioDeviceID>.size
+        var ids = [AudioDeviceID](repeating: 0, count: count)
+        guard AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &propAddr, 0, nil, &propSize, &ids
+        ) == noErr else { return }
+
+        for id in ids {
+            var uidAddr = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyDeviceUID,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            var uidSize = UInt32(MemoryLayout<Unmanaged<CFString>>.size)
+            var uidRef: Unmanaged<CFString>?
+            guard AudioObjectGetPropertyData(id, &uidAddr, 0, nil, &uidSize, &uidRef) == noErr,
+                  let devUID = uidRef?.takeUnretainedValue() as String?,
+                  devUID == "ImperatorEQ_Aggregate" else { continue }
+            AudioHardwareDestroyAggregateDevice(id)
+            NSLog("Recovery: destroyed stale aggregate device")
+        }
+    }
+}
+
 struct OutputDevice: Identifiable, Equatable {
     let id: AudioDeviceID
     let uid: String
@@ -39,6 +183,9 @@ final class AudioEngine: ObservableObject {
     private var manualOutputUID: String?
     private var deviceListListenerInstalled = false
     private nonisolated(unsafe) var deviceListListenerBlock: AudioObjectPropertyListenerBlock?
+    private var volumeForwarderInstalled = false
+    private nonisolated(unsafe) var volumeForwarderBlock: AudioObjectPropertyListenerBlock?
+    private nonisolated(unsafe) var isForwardingVolume = false
 
     private let blackHoleUID = "BlackHole2ch_UID"
     private let aggregateUID = "ImperatorEQ_Aggregate"
@@ -77,6 +224,12 @@ final class AudioEngine: ObservableObject {
     func setup(store: EQStore) {
         self.store = store
 
+        // Recover from previous crash (restores audio if BlackHole stuck as default)
+        AudioRecovery.recoverIfNeeded()
+
+        // Install signal handlers so SIGTERM/SIGINT clean up properly
+        installSignalHandlers()
+
         if findDeviceByUID(blackHoleUID) == nil {
             NSLog("BlackHole not found, attempting install")
             DriverInstaller.installIfNeeded()
@@ -92,6 +245,18 @@ final class AudioEngine: ObservableObject {
         }
     }
 
+    private func installSignalHandlers() {
+        // SIGTERM (normal kill) and SIGINT (Ctrl-C) can be caught
+        // SIGKILL (kill -9) cannot — that's handled by AudioRecovery on next launch
+        let handler: @convention(c) (Int32) -> Void = { _ in
+            // Restore default output synchronously from signal context
+            AudioRecovery.recoverIfNeeded()
+            exit(0)
+        }
+        signal(SIGTERM, handler)
+        signal(SIGINT, handler)
+    }
+
     func start(store: EQStore) {
         guard !isRunning else { return }
 
@@ -100,6 +265,10 @@ final class AudioEngine: ObservableObject {
             return
         }
         blackHoleDeviceID = bhDeviceID
+
+        // Ensure BlackHole is unmuted and at full volume — macOS persists per-device
+        // volume/mute state, and if it's muted or at 0, all audio through it is silent
+        ensureDeviceUnmuted(bhDeviceID)
 
         // Determine output device: manual > BT > built-in > fallback
         let realID: AudioDeviceID
@@ -230,7 +399,7 @@ final class AudioEngine: ObservableObject {
                               kAudioUnitScope_Input, 0, &eqInputCB,
                               UInt32(MemoryLayout<AURenderCallbackStruct>.size))
 
-        // Output callback: pulls from EQ, applies volume/balance, captures viz
+        // Output callback: pulls from EQ, applies volume/balance
         var outputCB = AURenderCallbackStruct(
             inputProc: { (inRefCon, ioActionFlags, inTimeStamp, _, inFrames, ioData) -> OSStatus in
                 let ctx = Unmanaged<RenderContext>.fromOpaque(inRefCon).takeUnretainedValue()
@@ -270,12 +439,6 @@ final class AudioEngine: ObservableObject {
         s = AudioUnitInitialize(ioU)
         NSLog("AUHAL init: %d", s)
 
-        // Debug: check actual format on AUHAL output
-        var actualFmt = AudioStreamBasicDescription()
-        var actualSize = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
-        AudioUnitGetProperty(ioU, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 0, &actualFmt, &actualSize)
-        NSLog("AUHAL output format: %.0fHz, %d ch, %d bits", actualFmt.mSampleRate, actualFmt.mChannelsPerFrame, actualFmt.mBitsPerChannel)
-
         // Configure EQ bands AFTER init (init resets parameters)
         for i in 0..<10 {
             let idx = AudioUnitParameterID(i)
@@ -293,6 +456,11 @@ final class AudioEngine: ObservableObject {
         self.ioUnit = ioU
         self.eqUnit = eqU
 
+        // Save recovery info BEFORE redirecting audio
+        if let uid = getDeviceUID(realID) {
+            AudioRecovery.saveRealOutputUID(uid)
+        }
+
         // Route system audio to BlackHole
         setDefaultOutputDevice(bhDeviceID)
         NSLog("System output → BlackHole")
@@ -300,11 +468,13 @@ final class AudioEngine: ObservableObject {
         isRunning = true
         installDeviceListener()
         installDeviceListListener()
+        installVolumeForwarder()
         refreshOutputDevices()
         NSLog("Engine running")
     }
 
     func stop() {
+        removeVolumeForwarder()
         removeDeviceListener()
         removeDeviceListListener()
 
@@ -327,6 +497,9 @@ final class AudioEngine: ObservableObject {
 
         destroyAggregateDevice()
         restoreOriginalOutput()
+
+        // Clear recovery file — clean shutdown, no recovery needed
+        AudioRecovery.clear()
 
         isRunning = false
         NSLog("Engine stopped")
@@ -437,6 +610,110 @@ final class AudioEngine: ObservableObject {
         )
         deviceListListenerBlock = nil
         deviceListListenerInstalled = false
+    }
+
+    // MARK: - Volume Forwarding
+    // When BlackHole is the default output, macOS volume keys adjust BlackHole's volume.
+    // We intercept those changes, forward them to the real output device, and reset
+    // BlackHole to 1.0/unmuted so audio always flows at full level.
+
+    private func installVolumeForwarder() {
+        guard !volumeForwarderInstalled, let bhID = blackHoleDeviceID else { return }
+
+        let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            DispatchQueue.main.async { self?.handleBlackHoleVolumeChange() }
+        }
+        volumeForwarderBlock = block
+
+        // Listen for volume and mute changes on BlackHole output (master element)
+        let selectors: [AudioObjectPropertySelector] = [
+            kAudioDevicePropertyVolumeScalar,
+            kAudioDevicePropertyMute,
+        ]
+        for selector in selectors {
+            var addr = AudioObjectPropertyAddress(
+                mSelector: selector,
+                mScope: kAudioDevicePropertyScopeOutput,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            guard AudioObjectHasProperty(bhID, &addr) else { continue }
+            AudioObjectAddPropertyListenerBlock(bhID, &addr, DispatchQueue.main, block)
+        }
+        volumeForwarderInstalled = true
+    }
+
+    private func removeVolumeForwarder() {
+        guard volumeForwarderInstalled, let block = volumeForwarderBlock, let bhID = blackHoleDeviceID else { return }
+        let selectors: [AudioObjectPropertySelector] = [
+            kAudioDevicePropertyVolumeScalar,
+            kAudioDevicePropertyMute,
+        ]
+        for selector in selectors {
+            var addr = AudioObjectPropertyAddress(
+                mSelector: selector,
+                mScope: kAudioDevicePropertyScopeOutput,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            AudioObjectRemovePropertyListenerBlock(bhID, &addr, DispatchQueue.main, block)
+        }
+        volumeForwarderBlock = nil
+        volumeForwarderInstalled = false
+    }
+
+    private func handleBlackHoleVolumeChange() {
+        guard !isForwardingVolume, let bhID = blackHoleDeviceID, let realID = realOutputDeviceID else { return }
+        isForwardingVolume = true
+        defer { isForwardingVolume = false }
+
+        // Read BlackHole's current volume
+        var volAddr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyVolumeScalar,
+            mScope: kAudioDevicePropertyScopeOutput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        if AudioObjectHasProperty(bhID, &volAddr) {
+            var vol: Float32 = 1.0
+            var size = UInt32(MemoryLayout<Float32>.size)
+            if AudioObjectGetPropertyData(bhID, &volAddr, 0, nil, &size, &vol) == noErr, vol < 1.0 {
+                // Forward to real output device
+                var realVolAddr = AudioObjectPropertyAddress(
+                    mSelector: kAudioDevicePropertyVolumeScalar,
+                    mScope: kAudioDevicePropertyScopeOutput,
+                    mElement: kAudioObjectPropertyElementMain
+                )
+                if AudioObjectHasProperty(realID, &realVolAddr) {
+                    AudioObjectSetPropertyData(realID, &realVolAddr, 0, nil, size, &vol)
+                }
+                // Reset BlackHole to 1.0
+                var full: Float32 = 1.0
+                AudioObjectSetPropertyData(bhID, &volAddr, 0, nil, size, &full)
+            }
+        }
+
+        // Read BlackHole's mute state
+        var muteAddr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyMute,
+            mScope: kAudioDevicePropertyScopeOutput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        if AudioObjectHasProperty(bhID, &muteAddr) {
+            var muted: UInt32 = 0
+            var size = UInt32(MemoryLayout<UInt32>.size)
+            if AudioObjectGetPropertyData(bhID, &muteAddr, 0, nil, &size, &muted) == noErr, muted != 0 {
+                // Forward mute to real output
+                var realMuteAddr = AudioObjectPropertyAddress(
+                    mSelector: kAudioDevicePropertyMute,
+                    mScope: kAudioDevicePropertyScopeOutput,
+                    mElement: kAudioObjectPropertyElementMain
+                )
+                if AudioObjectHasProperty(realID, &realMuteAddr) {
+                    AudioObjectSetPropertyData(realID, &realMuteAddr, 0, nil, size, &muted)
+                }
+                // Reset BlackHole to unmuted
+                var unmuted: UInt32 = 0
+                AudioObjectSetPropertyData(bhID, &muteAddr, 0, nil, size, &unmuted)
+            }
+        }
     }
 
     private func handleDeviceListChange() {
@@ -583,9 +860,14 @@ final class AudioEngine: ObservableObject {
     }
 
     private func getOutputChannelCount(_ deviceID: AudioDeviceID) -> Int {
+        channelCount(deviceID, scope: kAudioDevicePropertyScopeOutput)
+    }
+
+
+    private func channelCount(_ deviceID: AudioDeviceID, scope: AudioObjectPropertyScope) -> Int {
         var addr = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyStreamConfiguration,
-            mScope: kAudioDevicePropertyScopeOutput,
+            mScope: scope,
             mElement: kAudioObjectPropertyElementMain
         )
         var bufSize: UInt32 = 0
@@ -669,5 +951,43 @@ final class AudioEngine: ObservableObject {
             mElement: kAudioObjectPropertyElementMain
         )
         AudioObjectSetPropertyData(deviceID, &address, 0, nil, size, &rate)
+    }
+
+    private func ensureDeviceUnmuted(_ deviceID: AudioDeviceID) {
+        // Unmute
+        var muteAddr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyMute,
+            mScope: kAudioDevicePropertyScopeOutput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        let hasMute = AudioObjectHasProperty(deviceID, &muteAddr)
+        if hasMute {
+            var muted: UInt32 = 0
+            var muteSize = UInt32(MemoryLayout<UInt32>.size)
+            AudioObjectGetPropertyData(deviceID, &muteAddr, 0, nil, &muteSize, &muted)
+            if muted != 0 {
+                var unmuted: UInt32 = 0
+                AudioObjectSetPropertyData(deviceID, &muteAddr, 0, nil, muteSize, &unmuted)
+                NSLog("Unmuted device %d", deviceID)
+            }
+        }
+
+        // Set volume to 1.0
+        var volAddr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyVolumeScalar,
+            mScope: kAudioDevicePropertyScopeOutput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        let hasVol = AudioObjectHasProperty(deviceID, &volAddr)
+        if hasVol {
+            var vol: Float32 = 0
+            var volSize = UInt32(MemoryLayout<Float32>.size)
+            AudioObjectGetPropertyData(deviceID, &volAddr, 0, nil, &volSize, &vol)
+            if vol < 1.0 {
+                var fullVol: Float32 = 1.0
+                AudioObjectSetPropertyData(deviceID, &volAddr, 0, nil, volSize, &fullVol)
+                NSLog("Set device %d volume from %.2f to 1.0", deviceID, vol)
+            }
+        }
     }
 }
