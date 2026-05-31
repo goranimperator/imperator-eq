@@ -3,7 +3,6 @@ import ServiceManagement
 
 struct PopoverContentView: View {
     @EnvironmentObject var store: EQStore
-    let restartAction: () -> Void
     let quitAction: () -> Void
 
     var body: some View {
@@ -149,15 +148,6 @@ struct PopoverContentView: View {
             LaunchAtLoginToggle()
 
             Spacer()
-
-            HoverButton(action: restartAction) {
-                Text("Restart")
-                    .font(.caption)
-            }
-
-            Text("|")
-                .font(.caption)
-                .foregroundStyle(.quaternary)
 
             HoverButton(action: quitAction) {
                 Text("Quit")

@@ -54,21 +54,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         popover.behavior = .transient
         popover.animates = true
 
-        let restartAction = { [weak self] in
-            self?.audioEngine.stop()
-            // Relaunch the app at the same path
-            let url = URL(fileURLWithPath: Bundle.main.bundlePath)
-            NSWorkspace.shared.openApplication(at: url, configuration: .init())
-            NSApplication.shared.terminate(nil)
-        }
-
         let quitAction = { [weak self] in
             self?.audioEngine.stop()
             NSApplication.shared.terminate(nil)
         }
 
         popover.contentViewController = NSHostingController(
-            rootView: PopoverContentView(restartAction: restartAction, quitAction: quitAction)
+            rootView: PopoverContentView(quitAction: quitAction)
                 .environmentObject(eqStore)
                 .environmentObject(audioEngine)
         )

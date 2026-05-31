@@ -33,9 +33,9 @@ struct OutputDeviceView: View {
                     }
                 }
                 .padding(.top, 8)
-                .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
+        .clipped()
     }
 }
 
