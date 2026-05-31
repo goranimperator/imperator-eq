@@ -84,14 +84,27 @@ struct PresetManagerView: View {
         }
     }
 
+    private var nameIsDuplicate: Bool {
+        !newPresetName.isEmpty && store.presetNameExists(newPresetName)
+    }
+
     private var savePresetSheet: some View {
         VStack(spacing: 12) {
             Text("Save Preset")
                 .font(.headline)
 
-            TextField("Preset name", text: $newPresetName)
-                .textFieldStyle(.roundedBorder)
-                .frame(width: 200)
+            VStack(alignment: .leading, spacing: 4) {
+                TextField("Preset name", text: $newPresetName)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 200)
+
+                if nameIsDuplicate {
+                    Text("A preset with this name already exists. Please choose a different name.")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .frame(width: 200, alignment: .leading)
+                }
+            }
 
             HStack {
                 Button("Cancel") {
@@ -101,14 +114,14 @@ struct PresetManagerView: View {
                 .keyboardShortcut(.cancelAction)
 
                 Button("Save") {
-                    if !newPresetName.isEmpty {
+                    if !newPresetName.isEmpty && !nameIsDuplicate {
                         store.savePreset(name: newPresetName)
                         newPresetName = ""
                         showSaveSheet = false
                     }
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(newPresetName.isEmpty)
+                .disabled(newPresetName.isEmpty || nameIsDuplicate)
             }
         }
         .padding(20)
@@ -125,14 +138,27 @@ struct RenamePresetSheet: View {
     @Binding var editingPreset: EQPreset?
     @State private var name: String = ""
 
+    private var nameIsDuplicate: Bool {
+        !name.isEmpty && name.lowercased() != preset.name.lowercased() && store.presetNameExists(name)
+    }
+
     var body: some View {
         VStack(spacing: 12) {
             Text("Rename Preset")
                 .font(.headline)
 
-            TextField("Preset name", text: $name)
-                .textFieldStyle(.roundedBorder)
-                .frame(width: 200)
+            VStack(alignment: .leading, spacing: 4) {
+                TextField("Preset name", text: $name)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 200)
+
+                if nameIsDuplicate {
+                    Text("A preset with this name already exists. Please choose a different name.")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .frame(width: 200, alignment: .leading)
+                }
+            }
 
             HStack {
                 Button("Cancel") {
@@ -141,13 +167,14 @@ struct RenamePresetSheet: View {
                 .keyboardShortcut(.cancelAction)
 
                 Button("Save") {
-                    if !name.isEmpty, let index = store.presets.firstIndex(where: { $0.id == preset.id }) {
-                        store.presets[index].name = name
-                        editingPreset = nil
-                    }
+                    guard !name.isEmpty, !nameIsDuplicate,
+                          let index = store.presets.firstIndex(where: { $0.id == preset.id }) else { return }
+                    store.presets[index].name = name
+                    store.persistPresets()
+                    editingPreset = nil
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(name.isEmpty)
+                .disabled(name.isEmpty || nameIsDuplicate)
             }
         }
         .padding(20)

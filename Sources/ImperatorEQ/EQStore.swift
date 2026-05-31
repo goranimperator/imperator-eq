@@ -111,6 +111,10 @@ final class EQStore: ObservableObject {
         activePresetId = nil
     }
 
+    func presetNameExists(_ name: String) -> Bool {
+        presets.contains { $0.name.lowercased() == name.lowercased() }
+    }
+
     func savePreset(name: String) {
         let preset = EQPreset(name: name, bands: bands, volume: volume, balance: balance)
         presets.insert(preset, at: 0)
@@ -149,6 +153,7 @@ final class EQStore: ObservableObject {
         volume = preset.volume
         balance = preset.balance
         activePresetId = preset.id
+        saveState() // Persist immediately so active preset survives force-quit
     }
 
     private func ensureDefaultPresets() {
@@ -208,7 +213,7 @@ final class EQStore: ObservableObject {
         activePresetId = state.activePresetId
     }
 
-    private func persistPresets() {
+    func persistPresets() {
         guard let data = try? JSONEncoder().encode(presets) else { return }
         try? data.write(to: presetsURL)
     }
