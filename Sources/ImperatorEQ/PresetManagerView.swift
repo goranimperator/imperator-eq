@@ -7,6 +7,7 @@ struct PresetManagerView: View {
     @State private var showSaveSheet = false
     @State private var newPresetName = ""
     @State private var editingPreset: EQPreset?
+    @State private var draggingPresetId: UUID?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -52,11 +53,21 @@ struct PresetManagerView: View {
                                     preset: preset,
                                     isActive: store.activePresetId == preset.id,
                                     isDefault: preset.isDefault,
+                                    isDragTarget: draggingPresetId != nil && draggingPresetId != preset.id && !preset.isDefault,
                                     onApply: { store.applyPreset(preset) },
                                     onUpdate: { store.updatePreset(preset) },
                                     onDelete: { store.deletePreset(preset) },
                                     onRename: { editingPreset = preset }
                                 )
+                                .onDrag {
+                                    draggingPresetId = preset.id
+                                    return NSItemProvider(object: preset.id.uuidString as NSString)
+                                }
+                                .onDrop(of: [.text], delegate: PresetDropDelegate(
+                                    targetId: preset.id,
+                                    store: store,
+                                    draggingId: $draggingPresetId
+                                ))
                             }
                         }
                     }
@@ -144,10 +155,32 @@ struct RenamePresetSheet: View {
     }
 }
 
+struct PresetDropDelegate: DropDelegate {
+    let targetId: UUID
+    let store: EQStore
+    @Binding var draggingId: UUID?
+
+    func performDrop(info: DropInfo) -> Bool {
+        guard let fromId = draggingId else { return false }
+        store.movePreset(fromId: fromId, toId: targetId)
+        draggingId = nil
+        return true
+    }
+
+    func dropEntered(info: DropInfo) {}
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+
+    func dropExited(info: DropInfo) {}
+}
+
 struct PresetRowView: View {
     let preset: EQPreset
     let isActive: Bool
     let isDefault: Bool
+    var isDragTarget: Bool = false
     let onApply: () -> Void
     let onUpdate: () -> Void
     let onDelete: () -> Void

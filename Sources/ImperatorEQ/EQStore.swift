@@ -55,6 +55,7 @@ final class EQStore: ObservableObject {
 
     private let presetsURL: URL
     private let stateURL: URL
+    private var stateSaveCancellable: AnyCancellable?
 
     static let defaultPresets: [EQPreset] = [
         EQPreset(name: "Bass Boost", bands: defaultFrequencies.enumerated().map { i, freq in
@@ -86,6 +87,21 @@ final class EQStore: ObservableObject {
         loadPresets()
         ensureDefaultPresets()
         loadState()
+        setupAutoSave()
+    }
+
+    private func setupAutoSave() {
+        // Auto-save state on any change (debounced 1s to avoid thrashing during slider drags)
+        stateSaveCancellable = Publishers.MergeMany(
+            $bands.map { _ in () }.eraseToAnyPublisher(),
+            $volume.map { _ in () }.eraseToAnyPublisher(),
+            $balance.map { _ in () }.eraseToAnyPublisher(),
+            $isEnabled.map { _ in () }.eraseToAnyPublisher(),
+            $activePresetId.map { _ in () }.eraseToAnyPublisher()
+        )
+        .dropFirst(5) // Skip initial values from init
+        .debounce(for: .seconds(1), scheduler: RunLoop.main)
+        .sink { [weak self] in self?.saveState() }
     }
 
     func resetBands() {
@@ -97,7 +113,7 @@ final class EQStore: ObservableObject {
 
     func savePreset(name: String) {
         let preset = EQPreset(name: name, bands: bands, volume: volume, balance: balance)
-        presets.append(preset)
+        presets.insert(preset, at: 0)
         activePresetId = preset.id
         persistPresets()
     }
@@ -105,6 +121,17 @@ final class EQStore: ObservableObject {
     func updatePreset(_ preset: EQPreset) {
         guard let index = presets.firstIndex(where: { $0.id == preset.id }) else { return }
         presets[index] = EQPreset(id: preset.id, name: preset.name, bands: bands, volume: volume, balance: balance)
+        persistPresets()
+    }
+
+    func movePreset(fromId: UUID, toId: UUID) {
+        guard fromId != toId,
+              let fromIndex = presets.firstIndex(where: { $0.id == fromId }),
+              let toIndex = presets.firstIndex(where: { $0.id == toId }),
+              !presets[fromIndex].isDefault else { return }
+        let preset = presets.remove(at: fromIndex)
+        let insertIndex = fromIndex < toIndex ? toIndex : toIndex
+        presets.insert(preset, at: insertIndex)
         persistPresets()
     }
 
