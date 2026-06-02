@@ -9,6 +9,7 @@ private final class RenderContext {
     var eqUnit: AudioUnit
     var volume: Float = 1.0
     var balance: Float = 0.0
+    var renderCount: Int64 = 0
     var consecutiveErrors: Int32 = 0
     var lastErrorCode: OSStatus = 0
     init(ioUnit: AudioUnit, eqUnit: AudioUnit) {
@@ -186,6 +187,7 @@ final class AudioEngine: ObservableObject {
     private var deviceListListenerInstalled = false
     private nonisolated(unsafe) var deviceListListenerBlock: AudioObjectPropertyListenerBlock?
     private var watchdogTimer: Timer?
+    private var lastWatchdogRenderCount: Int64 = 0
     private let blackHoleUID = "BlackHole2ch_UID"
     private let aggregateUID = "ImperatorEQ_Aggregate"
     private let eqFrequencies: [Float] = [32, 64, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]
@@ -402,6 +404,8 @@ final class AudioEngine: ObservableObject {
         var outputCB = AURenderCallbackStruct(
             inputProc: { (inRefCon, ioActionFlags, inTimeStamp, _, inFrames, ioData) -> OSStatus in
                 let ctx = Unmanaged<RenderContext>.fromOpaque(inRefCon).takeUnretainedValue()
+
+                ctx.renderCount += 1
 
                 // Pull processed audio from EQ
                 let status = AudioUnitRender(ctx.eqUnit, ioActionFlags, inTimeStamp, 0, inFrames, ioData!)
@@ -633,9 +637,20 @@ final class AudioEngine: ObservableObject {
     private func checkEngineHealth() {
         guard isRunning, let store, let ctx = context else { return }
 
-        // Check if render callback is producing persistent errors
+        let currentCount = ctx.renderCount
         let errors = ctx.consecutiveErrors
         let lastError = ctx.lastErrorCode
+
+        // Check if render callback stopped being called entirely
+        if currentCount == lastWatchdogRenderCount && currentCount > 0 {
+            NSLog("Watchdog: render callback stalled (count=%lld, errors=%d, lastErr=%d), restarting", currentCount, errors, lastError)
+            stop()
+            start(store: store)
+            return
+        }
+        lastWatchdogRenderCount = currentCount
+
+        // Check if render callback is producing persistent errors
         if errors > 100 {
             NSLog("Watchdog: %d consecutive render errors (last: %d), restarting engine", errors, lastError)
             stop()
