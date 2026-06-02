@@ -9,6 +9,8 @@ private final class RenderContext {
     var eqUnit: AudioUnit
     var volume: Float = 1.0
     var balance: Float = 0.0
+    var consecutiveErrors: Int32 = 0
+    var lastErrorCode: OSStatus = 0
     init(ioUnit: AudioUnit, eqUnit: AudioUnit) {
         self.ioUnit = ioUnit
         self.eqUnit = eqUnit
@@ -183,6 +185,7 @@ final class AudioEngine: ObservableObject {
     private var manualOutputUID: String?
     private var deviceListListenerInstalled = false
     private nonisolated(unsafe) var deviceListListenerBlock: AudioObjectPropertyListenerBlock?
+    private var watchdogTimer: Timer?
     private let blackHoleUID = "BlackHole2ch_UID"
     private let aggregateUID = "ImperatorEQ_Aggregate"
     private let eqFrequencies: [Float] = [32, 64, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]
@@ -402,7 +405,12 @@ final class AudioEngine: ObservableObject {
 
                 // Pull processed audio from EQ
                 let status = AudioUnitRender(ctx.eqUnit, ioActionFlags, inTimeStamp, 0, inFrames, ioData!)
-                guard status == noErr else { return status }
+                guard status == noErr else {
+                    ctx.consecutiveErrors += 1
+                    ctx.lastErrorCode = status
+                    return status
+                }
+                ctx.consecutiveErrors = 0
 
                 let bufs = UnsafeMutableAudioBufferListPointer(ioData!)
                 let frames = Int(inFrames)
@@ -464,11 +472,13 @@ final class AudioEngine: ObservableObject {
         isRunning = true
         installDeviceListener()
         installDeviceListListener()
+        startWatchdog()
         refreshOutputDevices()
         NSLog("Engine running")
     }
 
     func stop() {
+        stopWatchdog()
         removeDeviceListener()
         removeDeviceListListener()
 
@@ -604,6 +614,41 @@ final class AudioEngine: ObservableObject {
         )
         deviceListListenerBlock = nil
         deviceListListenerInstalled = false
+    }
+
+    // MARK: - Watchdog
+
+    private func startWatchdog() {
+        stopWatchdog()
+        watchdogTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.checkEngineHealth() }
+        }
+    }
+
+    private func stopWatchdog() {
+        watchdogTimer?.invalidate()
+        watchdogTimer = nil
+    }
+
+    private func checkEngineHealth() {
+        guard isRunning, let store, let ctx = context else { return }
+
+        // Check if render callback is producing persistent errors
+        let errors = ctx.consecutiveErrors
+        let lastError = ctx.lastErrorCode
+        if errors > 100 {
+            NSLog("Watchdog: %d consecutive render errors (last: %d), restarting engine", errors, lastError)
+            stop()
+            start(store: store)
+            return
+        }
+
+        // Check if aggregate device still exists
+        if aggregateDeviceID != 0 && findDeviceByUID(aggregateUID) == nil {
+            NSLog("Watchdog: aggregate device disappeared, restarting engine")
+            stop()
+            start(store: store)
+        }
     }
 
     private func handleDeviceListChange() {
