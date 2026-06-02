@@ -645,8 +645,12 @@ final class AudioEngine: ObservableObject {
             kAudioAggregateDeviceUIDKey as String: aggregateUID,
             kAudioAggregateDeviceNameKey as String: "Imperator EQ",
             kAudioAggregateDeviceSubDeviceListKey as String: [
+                // Output device is master clock — no drift compensation needed
                 [kAudioSubDeviceUIDKey as String: outputUID],
-                [kAudioSubDeviceUIDKey as String: inputUID],
+                // BlackHole is virtual — enable drift compensation to sync with master clock.
+                // Without this, clocks drift apart after a few minutes causing crackling then silence.
+                [kAudioSubDeviceUIDKey as String: inputUID,
+                 kAudioSubDeviceDriftCompensationKey as String: 1],
             ],
             kAudioAggregateDeviceMasterSubDeviceKey as String: outputUID,
             kAudioAggregateDeviceIsPrivateKey as String: 1,
