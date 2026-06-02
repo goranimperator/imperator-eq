@@ -723,7 +723,6 @@ final class AudioEngine: ObservableObject {
                  kAudioSubDeviceDriftCompensationKey as String: 1],
             ],
             kAudioAggregateDeviceMasterSubDeviceKey as String: outputUID,
-            kAudioAggregateDeviceIsPrivateKey as String: 1,
         ]
         var deviceID: AudioDeviceID = 0
         let status = AudioHardwareCreateAggregateDevice(desc as CFDictionary, &deviceID)
