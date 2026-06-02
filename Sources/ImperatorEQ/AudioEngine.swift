@@ -3,9 +3,10 @@ import CoreAudio
 import Foundation
 import os
 
-// Global atomic heartbeat — written by the real-time render thread,
+// Global atomic counters — written by the real-time render thread,
 // read by the watchdog on a separate queue. No actor isolation involved.
 private let heartbeat = OSAllocatedUnfairLock(initialState: Int64(0))
+private let errorCount = OSAllocatedUnfairLock(initialState: Int64(0))
 
 // Shared state between audio thread and main thread
 // Float reads/writes are atomic on Apple Silicon
@@ -420,12 +421,17 @@ final class AudioEngine: ObservableObject {
             inputProc: { (inRefCon, ioActionFlags, inTimeStamp, _, inFrames, ioData) -> OSStatus in
                 let ctx = Unmanaged<RenderContext>.fromOpaque(inRefCon).takeUnretainedValue()
 
-                // Heartbeat for watchdog — lock-free atomic increment
+                // Heartbeat for watchdog
                 heartbeat.withLock { $0 += 1 }
 
                 // Pull processed audio from EQ
                 let status = AudioUnitRender(ctx.eqUnit, ioActionFlags, inTimeStamp, 0, inFrames, ioData!)
-                guard status == noErr else { return status }
+                guard status == noErr else {
+                    errorCount.withLock { $0 += 1 }
+                    return status
+                }
+                // Reset error count on success
+                errorCount.withLock { $0 = 0 }
 
                 let bufs = UnsafeMutableAudioBufferListPointer(ioData!)
                 let frames = Int(inFrames)
@@ -638,6 +644,7 @@ final class AudioEngine: ObservableObject {
     private func startWatchdog() {
         stopWatchdog()
         heartbeat.withLock { $0 = 0 }
+        errorCount.withLock { $0 = 0 }
 
         let queue = DispatchQueue(label: "imperator.watchdog")
         let source = DispatchSource.makeTimerSource(queue: queue)
@@ -646,9 +653,12 @@ final class AudioEngine: ObservableObject {
         var lastCount: Int64 = 0
         source.setEventHandler {
             let current = heartbeat.withLock { $0 }
+            let errors = errorCount.withLock { $0 }
+            let stalled = current == lastCount && current > 0
+            let erroring = errors > 200 // ~2 seconds of continuous errors at 93 callbacks/sec
 
-            if current == lastCount && current > 0 {
-                NSLog("Watchdog: STALL DETECTED — render callback stopped, requesting restart")
+            if stalled || erroring {
+                NSLog("Watchdog: problem detected (heartbeat=%lld prev=%lld errors=%lld) — requesting restart", current, lastCount, errors)
                 DispatchQueue.main.async {
                     NotificationCenter.default.post(name: .imperatorEngineStalled, object: nil)
                 }
