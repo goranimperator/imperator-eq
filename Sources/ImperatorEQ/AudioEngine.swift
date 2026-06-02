@@ -186,7 +186,7 @@ final class AudioEngine: ObservableObject {
     private var manualOutputUID: String?
     private var deviceListListenerInstalled = false
     private nonisolated(unsafe) var deviceListListenerBlock: AudioObjectPropertyListenerBlock?
-    private var watchdogTimer: Timer?
+    private var watchdogSource: DispatchSourceTimer?
     private var lastWatchdogRenderCount: Int64 = 0
     private let blackHoleUID = "BlackHole2ch_UID"
     private let aggregateUID = "ImperatorEQ_Aggregate"
@@ -624,14 +624,20 @@ final class AudioEngine: ObservableObject {
 
     private func startWatchdog() {
         stopWatchdog()
-        watchdogTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.checkEngineHealth() }
+        lastWatchdogRenderCount = 0
+        let source = DispatchSource.makeTimerSource(queue: .main)
+        source.schedule(deadline: .now() + 5, repeating: 5)
+        source.setEventHandler { [weak self] in
+            DispatchQueue.main.async { self?.checkEngineHealth() }
         }
+        watchdogSource = source
+        source.resume()
+        NSLog("Watchdog started")
     }
 
     private func stopWatchdog() {
-        watchdogTimer?.invalidate()
-        watchdogTimer = nil
+        watchdogSource?.cancel()
+        watchdogSource = nil
     }
 
     private func checkEngineHealth() {
@@ -640,7 +646,6 @@ final class AudioEngine: ObservableObject {
         let currentCount = ctx.renderCount
         let errors = ctx.consecutiveErrors
         let lastError = ctx.lastErrorCode
-
         // Check if render callback stopped being called entirely
         if currentCount == lastWatchdogRenderCount && currentCount > 0 {
             NSLog("Watchdog: render callback stalled (count=%lld, errors=%d, lastErr=%d), restarting", currentCount, errors, lastError)
