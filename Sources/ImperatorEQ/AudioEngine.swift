@@ -1,6 +1,11 @@
 import AudioToolbox
 import CoreAudio
 import Foundation
+import os
+
+// Global atomic heartbeat — written by the real-time render thread,
+// read by the watchdog on a separate queue. No actor isolation involved.
+private let heartbeat = OSAllocatedUnfairLock(initialState: Int64(0))
 
 // Shared state between audio thread and main thread
 // Float reads/writes are atomic on Apple Silicon
@@ -9,9 +14,6 @@ private final class RenderContext {
     var eqUnit: AudioUnit
     var volume: Float = 1.0
     var balance: Float = 0.0
-    var renderCount: Int64 = 0
-    var consecutiveErrors: Int32 = 0
-    var lastErrorCode: OSStatus = 0
     init(ioUnit: AudioUnit, eqUnit: AudioUnit) {
         self.ioUnit = ioUnit
         self.eqUnit = eqUnit
@@ -162,6 +164,10 @@ private enum AudioRecovery {
     }
 }
 
+extension Notification.Name {
+    static let imperatorEngineStalled = Notification.Name("imperatorEngineStalled")
+}
+
 struct OutputDevice: Identifiable, Equatable {
     let id: AudioDeviceID
     let uid: String
@@ -186,8 +192,7 @@ final class AudioEngine: ObservableObject {
     private var manualOutputUID: String?
     private var deviceListListenerInstalled = false
     private nonisolated(unsafe) var deviceListListenerBlock: AudioObjectPropertyListenerBlock?
-    private var watchdogSource: DispatchSourceTimer?
-    private var lastWatchdogRenderCount: Int64 = 0
+    private nonisolated(unsafe) var watchdogSource: DispatchSourceTimer?
     private let blackHoleUID = "BlackHole2ch_UID"
     private let aggregateUID = "ImperatorEQ_Aggregate"
     private let eqFrequencies: [Float] = [32, 64, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]
@@ -230,6 +235,16 @@ final class AudioEngine: ObservableObject {
 
         // Install signal handlers so SIGTERM/SIGINT clean up properly
         installSignalHandlers()
+
+        // Listen for watchdog stall notifications (posted from background queue)
+        NotificationCenter.default.addObserver(forName: .imperatorEngineStalled, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, let store = self.store, self.isRunning else { return }
+                NSLog("Watchdog: restarting engine after stall")
+                self.stop()
+                self.start(store: store)
+            }
+        }
 
         if findDeviceByUID(blackHoleUID) == nil {
             NSLog("BlackHole not found, attempting install")
@@ -405,16 +420,12 @@ final class AudioEngine: ObservableObject {
             inputProc: { (inRefCon, ioActionFlags, inTimeStamp, _, inFrames, ioData) -> OSStatus in
                 let ctx = Unmanaged<RenderContext>.fromOpaque(inRefCon).takeUnretainedValue()
 
-                ctx.renderCount += 1
+                // Heartbeat for watchdog — lock-free atomic increment
+                heartbeat.withLock { $0 += 1 }
 
                 // Pull processed audio from EQ
                 let status = AudioUnitRender(ctx.eqUnit, ioActionFlags, inTimeStamp, 0, inFrames, ioData!)
-                guard status == noErr else {
-                    ctx.consecutiveErrors += 1
-                    ctx.lastErrorCode = status
-                    return status
-                }
-                ctx.consecutiveErrors = 0
+                guard status == noErr else { return status }
 
                 let bufs = UnsafeMutableAudioBufferListPointer(ioData!)
                 let frames = Int(inFrames)
@@ -621,49 +632,38 @@ final class AudioEngine: ObservableObject {
     }
 
     // MARK: - Watchdog
+    // Completely decoupled from @MainActor — uses a global atomic heartbeat
+    // counter written by the render callback and read from a background queue.
 
     private func startWatchdog() {
         stopWatchdog()
-        lastWatchdogRenderCount = 0
-        // Use a background queue — the main thread may be blocked by AppKit
+        heartbeat.withLock { $0 = 0 }
+
         let queue = DispatchQueue(label: "imperator.watchdog")
         let source = DispatchSource.makeTimerSource(queue: queue)
         source.schedule(deadline: .now() + 5, repeating: 5)
-        source.setEventHandler { [weak self] in
-            guard let self else { return }
-            let ctx = self.context
-            let running = self.isRunning
-            guard running, let ctx else { return }
 
-            let currentCount = ctx.renderCount
-            let errors = ctx.consecutiveErrors
-            let lastError = ctx.lastErrorCode
-            let lastCount = self.lastWatchdogRenderCount
-            self.lastWatchdogRenderCount = currentCount
+        var lastCount: Int64 = 0
+        source.setEventHandler {
+            let current = heartbeat.withLock { $0 }
 
-            let stalled = currentCount == lastCount && currentCount > 0
-            let tooManyErrors = errors > 100
-
-            if stalled || tooManyErrors {
-                NSLog("Watchdog: stall detected (renders=%lld, prev=%lld, errors=%d, lastErr=%d)", currentCount, lastCount, errors, lastError)
-                DispatchQueue.main.async { self.restartEngine() }
+            if current == lastCount && current > 0 {
+                NSLog("Watchdog: STALL DETECTED — render callback stopped, requesting restart")
+                DispatchQueue.main.async {
+                    NotificationCenter.default.post(name: .imperatorEngineStalled, object: nil)
+                }
             }
+            lastCount = current
         }
+
         watchdogSource = source
         source.resume()
-        NSLog("Watchdog started (background queue)")
+        NSLog("Watchdog started")
     }
 
     private func stopWatchdog() {
         watchdogSource?.cancel()
         watchdogSource = nil
-    }
-
-    private func restartEngine() {
-        guard isRunning, let store else { return }
-        NSLog("Watchdog: restarting engine")
-        stop()
-        start(store: store)
     }
 
     private func handleDeviceListChange() {
