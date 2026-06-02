@@ -625,14 +625,33 @@ final class AudioEngine: ObservableObject {
     private func startWatchdog() {
         stopWatchdog()
         lastWatchdogRenderCount = 0
-        let source = DispatchSource.makeTimerSource(queue: .main)
+        // Use a background queue — the main thread may be blocked by AppKit
+        let queue = DispatchQueue(label: "imperator.watchdog")
+        let source = DispatchSource.makeTimerSource(queue: queue)
         source.schedule(deadline: .now() + 5, repeating: 5)
         source.setEventHandler { [weak self] in
-            DispatchQueue.main.async { self?.checkEngineHealth() }
+            guard let self else { return }
+            let ctx = self.context
+            let running = self.isRunning
+            guard running, let ctx else { return }
+
+            let currentCount = ctx.renderCount
+            let errors = ctx.consecutiveErrors
+            let lastError = ctx.lastErrorCode
+            let lastCount = self.lastWatchdogRenderCount
+            self.lastWatchdogRenderCount = currentCount
+
+            let stalled = currentCount == lastCount && currentCount > 0
+            let tooManyErrors = errors > 100
+
+            if stalled || tooManyErrors {
+                NSLog("Watchdog: stall detected (renders=%lld, prev=%lld, errors=%d, lastErr=%d)", currentCount, lastCount, errors, lastError)
+                DispatchQueue.main.async { self.restartEngine() }
+            }
         }
         watchdogSource = source
         source.resume()
-        NSLog("Watchdog started")
+        NSLog("Watchdog started (background queue)")
     }
 
     private func stopWatchdog() {
@@ -640,35 +659,11 @@ final class AudioEngine: ObservableObject {
         watchdogSource = nil
     }
 
-    private func checkEngineHealth() {
-        guard isRunning, let store, let ctx = context else { return }
-
-        let currentCount = ctx.renderCount
-        let errors = ctx.consecutiveErrors
-        let lastError = ctx.lastErrorCode
-        // Check if render callback stopped being called entirely
-        if currentCount == lastWatchdogRenderCount && currentCount > 0 {
-            NSLog("Watchdog: render callback stalled (count=%lld, errors=%d, lastErr=%d), restarting", currentCount, errors, lastError)
-            stop()
-            start(store: store)
-            return
-        }
-        lastWatchdogRenderCount = currentCount
-
-        // Check if render callback is producing persistent errors
-        if errors > 100 {
-            NSLog("Watchdog: %d consecutive render errors (last: %d), restarting engine", errors, lastError)
-            stop()
-            start(store: store)
-            return
-        }
-
-        // Check if aggregate device still exists
-        if aggregateDeviceID != 0 && findDeviceByUID(aggregateUID) == nil {
-            NSLog("Watchdog: aggregate device disappeared, restarting engine")
-            stop()
-            start(store: store)
-        }
+    private func restartEngine() {
+        guard isRunning, let store else { return }
+        NSLog("Watchdog: restarting engine")
+        stop()
+        start(store: store)
     }
 
     private func handleDeviceListChange() {
