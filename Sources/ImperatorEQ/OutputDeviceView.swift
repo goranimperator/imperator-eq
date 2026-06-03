@@ -2,12 +2,11 @@ import SwiftUI
 
 struct OutputDeviceView: View {
     @EnvironmentObject var engine: AudioEngine
-
-    @State private var isExpanded = false
+    @EnvironmentObject var store: EQStore
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Button(action: { withAnimation(.easeInOut(duration: 0.2)) { isExpanded.toggle() } }) {
+            Button(action: { store.outputDevicesExpanded.toggle() }) {
                 HStack {
                     Text("OUTPUT DEVICE")
                         .font(.system(size: 11, weight: .semibold))
@@ -16,13 +15,13 @@ struct OutputDeviceView: View {
                     Image(systemName: "chevron.right")
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.secondary)
-                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                        .rotationEffect(.degrees(store.outputDevicesExpanded ? 90 : 0))
                 }
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
 
-            if isExpanded {
+            if store.outputDevicesExpanded {
                 VStack(spacing: 4) {
                     ForEach(engine.availableOutputDevices) { device in
                         DeviceRowView(

@@ -1,8 +1,13 @@
 import SwiftUI
 import ServiceManagement
 
+extension Notification.Name {
+    static let imperatorPopoverResize = Notification.Name("imperatorPopoverResize")
+}
+
 struct PopoverContentView: View {
     @EnvironmentObject var store: EQStore
+    @EnvironmentObject var engine: AudioEngine
     let quitAction: () -> Void
 
     var body: some View {
@@ -24,6 +29,19 @@ struct PopoverContentView: View {
         }
         .frame(width: 380)
         .background(.black.opacity(0.15))
+        .onChange(of: store.presetsExpanded) { _ in postResizeNotification() }
+        .onChange(of: store.outputDevicesExpanded) { _ in postResizeNotification() }
+    }
+
+    private func postResizeNotification() {
+        var extra: CGFloat = 0
+        if store.presetsExpanded {
+            extra += CGFloat(store.presets.count) * 28 + 40
+        }
+        if store.outputDevicesExpanded {
+            extra += CGFloat(engine.availableOutputDevices.count) * 28 + 8
+        }
+        NotificationCenter.default.post(name: .imperatorPopoverResize, object: nil, userInfo: ["extra": extra])
     }
 
     private var headerView: some View {

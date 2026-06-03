@@ -52,6 +52,8 @@ final class EQStore: ObservableObject {
     @Published var isEnabled: Bool = true
     @Published var presets: [EQPreset] = []
     @Published var activePresetId: UUID?
+    @Published var presetsExpanded: Bool = false
+    @Published var outputDevicesExpanded: Bool = false
 
     private let presetsURL: URL
     private let stateURL: URL

@@ -3,7 +3,6 @@ import SwiftUI
 struct PresetManagerView: View {
     @EnvironmentObject var store: EQStore
 
-    @State private var isExpanded = false
     @State private var showSaveSheet = false
     @State private var newPresetName = ""
     @State private var editingPreset: EQPreset?
@@ -11,7 +10,7 @@ struct PresetManagerView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Button(action: { withAnimation(.easeInOut(duration: 0.2)) { isExpanded.toggle() } }) {
+            Button(action: { store.presetsExpanded.toggle() }) {
                 HStack {
                     Text("PRESETS")
                         .font(.system(size: 11, weight: .semibold))
@@ -20,13 +19,13 @@ struct PresetManagerView: View {
                     Image(systemName: "chevron.right")
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.secondary)
-                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                        .rotationEffect(.degrees(store.presetsExpanded ? 90 : 0))
                 }
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
 
-            if isExpanded {
+            if store.presetsExpanded {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
                         Spacer()
@@ -223,7 +222,7 @@ struct PresetRowView: View {
                     .fill(isActive ? Theme.brand : Color.gray.opacity(0.3))
                     .frame(width: 8, height: 8)
                 Text(preset.name)
-                    .font(.system(.body, weight: isActive ? .medium : .regular))
+                    .font(.system(size: 10, weight: isActive ? .medium : .regular))
                     .lineLimit(1)
             }
 

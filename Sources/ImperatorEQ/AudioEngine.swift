@@ -637,38 +637,28 @@ final class AudioEngine: ObservableObject {
         deviceListListenerInstalled = false
     }
 
-    // MARK: - Watchdog
-    // Completely decoupled from @MainActor — uses a global atomic heartbeat
-    // counter written by the render callback and read from a background queue.
+    // MARK: - Preventive Restart
+    // The aggregate device silently loses its BlackHole input connection
+    // after 5-30 minutes. No error is reported — AudioUnitRender succeeds
+    // but returns zeros. Since this can't be detected, we restart the
+    // engine periodically to prevent it.
+
+    private static let restartInterval: TimeInterval = 240 // 4 minutes
 
     private func startWatchdog() {
         stopWatchdog()
-        heartbeat.withLock { $0 = 0 }
-        errorCount.withLock { $0 = 0 }
-
         let queue = DispatchQueue(label: "imperator.watchdog")
         let source = DispatchSource.makeTimerSource(queue: queue)
-        source.schedule(deadline: .now() + 5, repeating: 5)
-
-        var lastCount: Int64 = 0
+        source.schedule(deadline: .now() + Self.restartInterval, repeating: Self.restartInterval)
         source.setEventHandler {
-            let current = heartbeat.withLock { $0 }
-            let errors = errorCount.withLock { $0 }
-            let stalled = current == lastCount && current > 0
-            let erroring = errors > 200 // ~2 seconds of continuous errors at 93 callbacks/sec
-
-            if stalled || erroring {
-                NSLog("Watchdog: problem detected (heartbeat=%lld prev=%lld errors=%lld) — requesting restart", current, lastCount, errors)
-                DispatchQueue.main.async {
-                    NotificationCenter.default.post(name: .imperatorEngineStalled, object: nil)
-                }
+            NSLog("Watchdog: preventive restart (every %.0fs)", Self.restartInterval)
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: .imperatorEngineStalled, object: nil)
             }
-            lastCount = current
         }
-
         watchdogSource = source
         source.resume()
-        NSLog("Watchdog started")
+        NSLog("Watchdog started (preventive restart every %.0fs)", Self.restartInterval)
     }
 
     private func stopWatchdog() {

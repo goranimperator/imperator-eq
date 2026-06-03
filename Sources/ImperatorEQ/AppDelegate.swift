@@ -95,6 +95,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.audioEngine.toggleEnabled(enabled)
             }
             .store(in: &cancellables)
+
+        NotificationCenter.default.addObserver(forName: .imperatorPopoverResize, object: nil, queue: .main) { [weak self] note in
+            Task { @MainActor in
+                guard let self, let extra = note.userInfo?["extra"] as? CGFloat else { return }
+                self.popover.contentSize = NSSize(width: 380, height: self.popoverHeight + extra)
+            }
+        }
     }
 
     @objc private func togglePopover() {
