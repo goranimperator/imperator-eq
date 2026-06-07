@@ -48,7 +48,7 @@ struct DeviceRowView: View {
     var body: some View {
         HStack(spacing: 6) {
             Circle()
-                .fill(isActive ? Theme.brand : Color.gray.opacity(0.3))
+                .fill(isActive ? AppColors.brand : Color.gray.opacity(0.3))
                 .frame(width: 8, height: 8)
             Text(name)
                 .font(.system(.body, weight: isActive ? .medium : .regular))
@@ -59,7 +59,7 @@ struct DeviceRowView: View {
         .padding(.vertical, 6)
         .background(
             RoundedRectangle(cornerRadius: 6)
-                .fill(isHovered ? Color.accentColor.opacity(0.1) : Color.clear)
+                .fill(isHovered ? AppColors.brand.opacity(0.1) : Color.clear)
         )
         .contentShape(Rectangle())
         .onTapGesture(perform: onSelect)

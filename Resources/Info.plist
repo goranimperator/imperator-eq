@@ -24,5 +24,7 @@
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Imperator EQ needs microphone access to visualize audio output.</string>
+	<key>NSHumanReadableCopyright</key>
+	<string>Copyright © 2024-2026 Goran Imperator. All rights reserved.</string>
 </dict>
 </plist>

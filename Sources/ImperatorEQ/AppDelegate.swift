@@ -14,6 +14,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let popoverHeight: CGFloat = 495
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.appearance = NSAppearance(named: .darkAqua)
+        UserDefaults.standard.set(0, forKey: "AppleAccentColor")
+        ProcessInfo.processInfo.setValue("Imperator EQ", forKey: "processName")
+
         eqStore = EQStore()
         audioEngine = AudioEngine()
         setupStatusItem()
@@ -50,7 +54,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setupPopover() {
         popover = NSPopover()
-        popover.contentSize = NSSize(width: 380, height: popoverHeight)
+        popover.contentSize = NSSize(width: 340, height: popoverHeight)
         popover.behavior = .transient
         popover.animates = true
 
@@ -99,7 +103,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NotificationCenter.default.addObserver(forName: .imperatorPopoverResize, object: nil, queue: .main) { [weak self] note in
             Task { @MainActor in
                 guard let self, let extra = note.userInfo?["extra"] as? CGFloat else { return }
-                self.popover.contentSize = NSSize(width: 380, height: self.popoverHeight + extra)
+                self.popover.contentSize = NSSize(width: 340, height: self.popoverHeight + extra)
             }
         }
     }

@@ -27,7 +27,7 @@ struct PopoverContentView: View {
             Divider()
             footerView
         }
-        .frame(width: 380)
+        .frame(width: 340)
         .background(.black.opacity(0.15))
         .onChange(of: store.presetsExpanded) { _ in postResizeNotification() }
         .onChange(of: store.outputDevicesExpanded) { _ in postResizeNotification() }
@@ -56,7 +56,7 @@ struct PopoverContentView: View {
 
             Toggle("", isOn: $store.isEnabled)
                 .toggleStyle(.switch)
-                .tint(Theme.brand)
+                .tint(AppColors.brand)
                 .labelsHidden()
                 .scaleEffect(0.55)
                 .frame(width: 36, height: 20)
@@ -188,7 +188,7 @@ struct LaunchAtLoginToggle: View {
                 .foregroundStyle(.primary)
             Toggle("", isOn: $isEnabled)
                 .toggleStyle(.switch)
-                .tint(Theme.brand)
+                .tint(AppColors.brand)
                 .labelsHidden()
                 .scaleEffect(0.55)
                 .frame(width: 36, height: 20)

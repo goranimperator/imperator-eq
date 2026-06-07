@@ -46,7 +46,7 @@ struct EQSlider: View {
                 context.fill(
                     Path(fillRect),
                     with: .linearGradient(
-                        Gradient(colors: Theme.gradientColors.reversed()),
+                        Gradient(colors: AppColors.gradientColors.reversed()),
                         startPoint: CGPoint(x: fillRect.minX, y: 0),
                         endPoint: CGPoint(x: fillRect.maxX, y: 0)
                     )

@@ -32,7 +32,7 @@ struct EQBandColumn: View {
     @State private var isDragging = false
 
     private let maxGain: Float = 12.0
-    private let brandRed = Theme.brand
+    private let brandRed = AppColors.brand
 
     private var normalizedGain: CGFloat {
         CGFloat((band.gain + maxGain) / (2 * maxGain))
@@ -96,6 +96,6 @@ struct EQBandColumn: View {
     }
 
     private var bandGradient: LinearGradient {
-        LinearGradient(colors: Theme.gradientColors, startPoint: .top, endPoint: .bottom)
+        LinearGradient(colors: AppColors.gradientColors, startPoint: .top, endPoint: .bottom)
     }
 }
