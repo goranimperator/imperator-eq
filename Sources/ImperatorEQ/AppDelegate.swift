@@ -63,8 +63,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApplication.shared.terminate(nil)
         }
 
+        let dismissAction: () -> Void = { [weak self] in
+            self?.closePopover()
+        }
+
         popover.contentViewController = NSHostingController(
-            rootView: PopoverContentView(quitAction: quitAction)
+            rootView: PopoverContentView(quitAction: quitAction, dismissAction: dismissAction)
                 .environmentObject(eqStore)
                 .environmentObject(audioEngine)
         )

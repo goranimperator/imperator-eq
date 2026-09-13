@@ -9,6 +9,7 @@ struct PopoverContentView: View {
     @EnvironmentObject var store: EQStore
     @EnvironmentObject var engine: AudioEngine
     let quitAction: () -> Void
+    let dismissAction: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
@@ -162,10 +163,21 @@ struct PopoverContentView: View {
     }
 
     private var footerView: some View {
-        HStack {
+        HStack(spacing: 12) {
             LaunchAtLoginToggle()
 
             Spacer()
+
+            // The popover is .transient, so a click inside it does not close
+            // it. Without the dismiss the About panel opens behind the popover.
+            HoverButton {
+                dismissAction()
+                AboutPanel.show()
+            } label: {
+                Text("About")
+                    .font(.caption)
+            }
+            .help("About Imperator EQ")
 
             HoverButton(action: quitAction) {
                 Text("Quit")
