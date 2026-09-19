@@ -4,7 +4,14 @@ import SwiftUI
 /// Brandbook 10.2: a standalone NSPanel, not a sheet and not a second popover.
 @MainActor
 enum AboutPanel {
-    /// Brandbook 10.2: 300 x 260.
+    /// Brandbook 10.2: 300 x 260. The content of section 10.3 measures 247pt
+    /// at these fonts, so it fits with room to spare, and `--about-check`
+    /// measures that rather than assuming it: a panel that clips its own
+    /// website line still looks finished in a screenshot.
+    ///
+    /// The view must not carry an explicit height. Pinning it to 260 made the
+    /// content report 292pt, because a frame is a proposal that children are
+    /// free to overflow, and the window then sized itself to the overflow.
     static let width: CGFloat = 300
     static let specifiedHeight: CGFloat = 260
 
@@ -81,6 +88,11 @@ struct AboutView: View {
 
     static let websiteURL = URL(string: "https://www.goranimperator.com")!
 
+    /// The bundle's own icon, loaded by name rather than through
+    /// `NSApp.applicationIconImage`. That property returns an empty image in an
+    /// LSUIElement app, and an empty image in SwiftUI is not a 64pt blank: the
+    /// view takes no space at all, so the panel would lay out short with no
+    /// icon and no gap where one should be.
     static var iconImage: NSImage {
         if let named = NSImage(named: "AppIcon") { return named }
         if let url = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
