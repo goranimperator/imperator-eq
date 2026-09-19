@@ -4,19 +4,17 @@ import SwiftUI
 /// Brandbook 10.2: a standalone NSPanel, not a sheet and not a second popover.
 @MainActor
 enum AboutPanel {
-    static let size = NSSize(width: 300, height: 260)
+    /// Brandbook 10.2: 300 x 260.
+    static let width: CGFloat = 300
+    static let specifiedHeight: CGFloat = 260
 
     private static var panel: NSPanel?
 
-    static func show() {
-        if let existing = panel, existing.isVisible {
-            NSApp.activate(ignoringOtherApps: true)
-            existing.makeKeyAndOrderFront(nil)
-            return
-        }
-
+    /// Builds the panel without showing it, so `--about-check` can measure the
+    /// real thing rather than the constants it was built from.
+    static func makePanel() -> NSPanel {
         let panel = NSPanel(
-            contentRect: NSRect(origin: .zero, size: size),
+            contentRect: NSRect(x: 0, y: 0, width: width, height: specifiedHeight),
             styleMask: [.titled, .closable, .fullSizeContentView],
             backing: .buffered,
             defer: false
@@ -33,10 +31,28 @@ enum AboutPanel {
         panel.contentViewController = NSHostingController(rootView: AboutView())
         // Setting contentViewController resizes the window to the hosted view's
         // fitting size, and a SwiftUI view that has not laid out yet reports
-        // zero, which would throw away the contentRect above.
-        panel.setContentSize(size)
-        panel.center()
+        // zero, which would throw away the contentRect above. Lay it out first,
+        // then take whichever is larger so the website line can never be
+        // clipped.
+        if let hosted = panel.contentViewController?.view {
+            hosted.layoutSubtreeIfNeeded()
+            panel.setContentSize(NSSize(width: width,
+                                        height: max(specifiedHeight, hosted.fittingSize.height)))
+        } else {
+            panel.setContentSize(NSSize(width: width, height: specifiedHeight))
+        }
+        return panel
+    }
 
+    static func show() {
+        if let existing = panel, existing.isVisible {
+            NSApp.activate(ignoringOtherApps: true)
+            existing.makeKeyAndOrderFront(nil)
+            return
+        }
+
+        let panel = makePanel()
+        panel.center()
         // Ordering front is not enough from an LSUIElement app: without the
         // activation the panel is created behind whatever the user was in.
         NSApp.activate(ignoringOtherApps: true)
@@ -65,9 +81,18 @@ struct AboutView: View {
 
     static let websiteURL = URL(string: "https://www.goranimperator.com")!
 
+    static var iconImage: NSImage {
+        if let named = NSImage(named: "AppIcon") { return named }
+        if let url = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
+           let fromFile = NSImage(contentsOf: url) {
+            return fromFile
+        }
+        return NSApp.applicationIconImage
+    }
+
     var body: some View {
         VStack(spacing: 12) {
-            Image(nsImage: NSApp.applicationIconImage)
+            Image(nsImage: AboutView.iconImage)
                 .resizable()
                 .interpolation(.high)
                 .frame(width: 64, height: 64)
@@ -99,6 +124,9 @@ struct AboutView: View {
             .help("Open goranimperator.com")
         }
         .padding(24)
-        .frame(width: AboutPanel.size.width, height: AboutPanel.size.height)
+        // Width only. Pinning the height here makes the content report its
+        // overflow instead of the spec, and the window grows to match.
+        .frame(width: AboutPanel.width)
+        .fixedSize(horizontal: false, vertical: true)
     }
 }

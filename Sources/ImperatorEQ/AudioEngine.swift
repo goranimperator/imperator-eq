@@ -1,3 +1,4 @@
+import AVFoundation
 import AudioToolbox
 import CoreAudio
 import Foundation
@@ -274,7 +275,42 @@ final class AudioEngine: ObservableObject {
         signal(SIGINT, handler)
     }
 
+    /// BlackHole's loopback is an input device, and macOS 27 blocks inside
+    /// `AudioDeviceCreateIOProcID` until microphone access has been decided.
+    /// The engine starts from `applicationDidFinishLaunching`, so that block
+    /// lands on the main thread before the run loop ever draws the status item:
+    /// the app hangs with no icon and no window, and the permission prompt it
+    /// is waiting for cannot be serviced. Asking up front keeps the wait
+    /// asynchronous and the launch non-blocking.
+    ///
+    /// Returns true when the engine may proceed now. When access has not been
+    /// decided yet it returns false and re-enters `start` once the user answers.
+    private func hasMicrophoneAccess(thenRetryWith store: EQStore) -> Bool {
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized:
+            return true
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
+                Task { @MainActor in
+                    guard granted else {
+                        NSLog("Microphone access denied, EQ processing stays off")
+                        return
+                    }
+                    self?.start(store: store)
+                }
+            }
+            return false
+        default:
+            NSLog("Microphone access denied, EQ processing stays off")
+            return false
+        }
+    }
+
     func start(store: EQStore) {
+        // Every path into the engine goes through here, so the microphone gate
+        // belongs here rather than at each caller.
+        guard hasMicrophoneAccess(thenRetryWith: store) else { return }
+
         guard !isRunning else { return }
 
         guard let bhDeviceID = findDeviceByUID(blackHoleUID) else {

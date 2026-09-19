@@ -45,10 +45,17 @@ struct PopoverContentView: View {
         NotificationCenter.default.post(name: .imperatorPopoverResize, object: nil, userInfo: ["extra": extra])
     }
 
+    /// Drawn once. The header is rebuilt on every state change and the glyph
+    /// never varies.
+    private static let headerIcon = StatusItemIcon.make(size: 16)
+
     private var headerView: some View {
         HStack(alignment: .center, spacing: 6) {
-            Image(systemName: "waveform")
-                .font(.system(size: 14))
+            // Brandbook 16.1 keeps the sigil out of the header; this is the
+            // app's own icon, the same glyph the menu bar item draws.
+            Image(nsImage: PopoverContentView.headerIcon)
+                .renderingMode(.template)
+                .foregroundStyle(.primary)
 
             Text("Imperator EQ")
                 .font(.headline)
@@ -57,10 +64,9 @@ struct PopoverContentView: View {
 
             Toggle("", isOn: $store.isEnabled)
                 .toggleStyle(.switch)
+                .scaleEffect(0.55)
                 .tint(AppColors.brand)
                 .labelsHidden()
-                .scaleEffect(0.55)
-                .frame(width: 36, height: 20)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
@@ -190,7 +196,7 @@ struct PopoverContentView: View {
 }
 
 struct LaunchAtLoginToggle: View {
-    @State private var isEnabled = true
+    @State private var isEnabled = SMAppService.mainApp.status == .enabled
     @State private var isHovered = false
 
     var body: some View {
@@ -200,35 +206,26 @@ struct LaunchAtLoginToggle: View {
                 .foregroundStyle(.primary)
             Toggle("", isOn: $isEnabled)
                 .toggleStyle(.switch)
+                .scaleEffect(0.55)
                 .tint(AppColors.brand)
                 .labelsHidden()
-                .scaleEffect(0.55)
-                .frame(width: 36, height: 20)
+                // The two-parameter onChange is macOS 14, and this app still
+                // deploys to 13, so the deprecated one-parameter form stays.
+                .onChange(of: isEnabled) { newValue in
+                    do {
+                        if newValue {
+                            try SMAppService.mainApp.register()
+                        } else {
+                            try SMAppService.mainApp.unregister()
+                        }
+                    } catch {
+                        isEnabled = SMAppService.mainApp.status == .enabled
+                    }
+                }
         }
         .opacity(isHovered ? 1.0 : 0.45)
         .animation(.easeInOut(duration: 0.2), value: isHovered)
         .onHover { isHovered = $0 }
-        .onAppear {
-            if SMAppService.mainApp.status != .enabled {
-                do {
-                    try SMAppService.mainApp.register()
-                    isEnabled = true
-                } catch {
-                    isEnabled = false
-                }
-            }
-        }
-        .onChange(of: isEnabled) { newValue in
-            do {
-                if newValue {
-                    try SMAppService.mainApp.register()
-                } else {
-                    try SMAppService.mainApp.unregister()
-                }
-            } catch {
-                isEnabled = SMAppService.mainApp.status == .enabled
-            }
-        }
     }
 }
 

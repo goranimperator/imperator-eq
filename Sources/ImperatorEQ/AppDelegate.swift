@@ -40,14 +40,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         guard let button = statusItem.button else { return }
 
-        let svg = """
-        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 10v3"/><path d="M6 6v11"/><path d="M10 3v18"/><path d="M14 8v7"/><path d="M18 5v13"/><path d="M22 10v3"/></svg>
-        """
-        if let data = svg.data(using: .utf8), let image = NSImage(data: data) {
-            image.isTemplate = true
-            image.size = NSSize(width: 18, height: 18)
-            button.image = image
-        }
+        button.image = StatusItemIcon.make()
+        button.toolTip = "Imperator EQ"
         button.action = #selector(togglePopover)
         button.target = self
     }

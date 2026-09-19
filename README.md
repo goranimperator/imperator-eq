@@ -1,93 +1,156 @@
-# Mac EQ
+<p align="center"><img src="Resources/AppIcon.png" width="128" alt="Imperator EQ"></p>
 
+# Imperator EQ
 
+A system-wide 10-band parametric equaliser for macOS, living in the menu bar.
 
-## Getting started
+macOS has no built-in EQ for system output. Imperator EQ adds one: it captures everything the
+Mac plays, runs it through an equaliser, and sends the result to your speakers or headphones.
+No per-app setup, and nothing else on the system has to be configured.
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+Requires macOS 13 or later, Apple silicon or Intel. Built and tested on macOS 27 only; older
+versions are expected to work but have not been verified.
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+Install at your own risk. The app is not notarized and carries no Apple Developer signature,
+so macOS cannot vouch for it. It is provided as is, with no warranty, under the MIT license.
 
-## Add your files
+## What it does
 
-* [Create](https://docs.gitlab.com/user/project/repository/web_editor/#create-a-file) or [upload](https://docs.gitlab.com/user/project/repository/web_editor/#upload-a-file) files
-* [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
+- 10 EQ bands from 32 Hz to 16 kHz, plus or minus 12 dB each
+- Volume boost up to 200% and left/right balance
+- Named presets you can save, rename, reorder and delete
+- Output device switching from the popover
+- Runs in the menu bar with no Dock icon, and can open at login
+
+## Install
+
+Download the zip from the [releases page](https://github.com/goranimperator/imperator-eq/releases),
+unzip it, and drag `Imperator EQ.app` into `/Applications`. The app is signed with a
+self-signed certificate rather than notarized, so the first launch needs a right-click and
+**Open** to get past Gatekeeper.
+
+On first run the app installs the BlackHole 2ch audio driver it bundles, which needs an
+administrator password once.
+
+## Permissions
+
+**Microphone.** macOS treats the loopback device as an audio input, so the system asks for
+microphone access the first time the equaliser starts. The app records nothing and never
+touches the built-in microphone; the permission covers the loopback capture of your own
+system audio. Without it macOS refuses to open the audio stream and the EQ stays inactive,
+though the menu bar icon and the popover still work. If you dismissed the prompt, grant it
+under **System Settings > Privacy & Security > Microphone**.
+
+While the EQ is running, macOS shows the orange microphone indicator in the menu bar. That is
+the loopback capture, not the built-in microphone.
+
+**Administrator password, once.** Installing the bundled BlackHole driver writes to
+`/Library/Audio/Plug-Ins/HAL`, which needs authorisation. Nothing after that does.
+
+## Use
+
+Click the waveform icon in the menu bar. The switch in the header turns processing on and
+off. Drag the band sliders to shape the sound, or pick a preset. **Reset** returns every band
+to flat. The output device list picks where the processed audio goes, and **Open at Login**
+starts the app with the Mac.
+
+## How it works
+
+System audio is routed into BlackHole 2ch, a virtual output device. The app builds an
+aggregate device combining BlackHole's input with your real output, pulls audio through an
+`AUNBandEQ` Audio Unit, and writes the processed result back to the real device.
 
 ```
-cd existing_repo
-git remote add origin https://gitlab.com/goranimperator/mac-eq.git
-git branch -M main
-git push -uf origin main
+System audio -> BlackHole 2ch (default output)
+             -> Aggregate device (BlackHole in + real out)
+             -> AUHAL -> AUNBandEQ (10 bands) -> volume and balance
+             -> Speakers or headphones
 ```
 
-## Integrate with your tools
+Selecting a different output device rebuilds the aggregate around it. If the app is killed
+without shutting down cleanly, the next launch restores whatever output device was default
+beforehand, so the Mac is never left playing into a virtual device with no speakers attached.
 
-* [Set up project integrations](https://gitlab.com/goranimperator/mac-eq/-/settings/integrations)
+## Build
 
-## Collaborate with your team
+```bash
+bash build.sh
+```
 
-* [Invite team members and collaborators](https://docs.gitlab.com/user/project/members/)
-* [Create a new merge request](https://docs.gitlab.com/user/project/merge_requests/creating_merge_requests/)
-* [Automatically close issues from merge requests](https://docs.gitlab.com/user/project/issues/managing_issues/#closing-issues-automatically)
-* [Enable merge request approvals](https://docs.gitlab.com/user/project/merge_requests/approvals/)
-* [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+That runs a universal release build, assembles `Imperator EQ.app`, signs it, and copies it to
+`/Applications`. Signing is not optional: Gatekeeper blocks an unsigned bundle.
 
-## Test and Deploy
+`swift build` on its own produces the binary without the app bundle, which is enough for
+checking that the code compiles but not for running the app.
 
-Use the built-in continuous integration in GitLab.
+Two things the build does that are easy to miss:
 
-* [Get started with GitLab CI/CD](https://docs.gitlab.com/ci/quick_start/)
-* [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/user/application_security/sast/)
-* [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/topics/autodevops/requirements/)
-* [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/user/clusters/agent/)
-* [Set up protected environments](https://docs.gitlab.com/ci/environments/protected_environments/)
+- It stamps the binary with the current SDK through `-Xlinker -platform_version` while keeping
+  the deployment target at macOS 13. AppKit picks which generation of controls to draw from
+  that stamp, so without it the app would keep drawing older controls on current systems even
+  though it still has to run on macOS 13.
+- It signs with the stable `Imperator Dev` certificate rather than ad-hoc. An ad-hoc signature's
+  designated requirement is the code hash, which changes on every build, so macOS would treat
+  each update as a different app and drop the microphone grant. Override with
+  `IMPERATOR_SIGN_IDENTITY` if you are building on a machine without that certificate.
 
-***
+The About panel has a self-check that measures it against the brandbook instead of trusting
+its own constants:
 
-# Editing this README
+```bash
+"/Applications/Imperator EQ.app/Contents/MacOS/ImperatorEQ" --about-check
+```
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+There are no tests and no linter.
 
-## Suggestions for a good README
+## Release
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+Bump `CFBundleShortVersionString` and `CFBundleVersion` in `Resources/Info.plist`, build, then
+tag and publish with the zipped app attached:
 
-## Name
-Choose a self-explaining name for your project.
+```bash
+bash build.sh
+ditto -c -k --sequesterRsrc --keepParent "Imperator EQ.app" "Imperator-EQ-x.y.z.zip"
+git tag vx.y.z && git push origin vx.y.z
+gh release create vx.y.z "Imperator-EQ-x.y.z.zip" --title "Imperator EQ x.y.z"
+```
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+## Layout
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+| Path | What lives there |
+| --- | --- |
+| `Sources/ImperatorEQ/main.swift` | Entry point and the `--about-check` gate |
+| `Sources/ImperatorEQ/AppDelegate.swift` | Status item, popover, bindings |
+| `Sources/ImperatorEQ/StatusItemIcon.swift` | The app glyph, shared by the menu bar item and the popover header |
+| `Sources/ImperatorEQ/AudioEngine.swift` | Aggregate device, AUHAL and EQ setup, render callbacks, recovery, watchdog |
+| `Sources/ImperatorEQ/AudioRecovery` (in `AudioEngine.swift`) | Restores the default output device after a crash |
+| `Sources/ImperatorEQ/EQStore.swift` | UI state and persistence to Application Support |
+| `Sources/ImperatorEQ/PopoverContentView.swift` | Popover layout, footer, launch-at-login toggle |
+| `Sources/ImperatorEQ/EQBandsView.swift` | The band sliders |
+| `Sources/ImperatorEQ/EQSlider.swift` | The slider control |
+| `Sources/ImperatorEQ/OutputDeviceView.swift` | Output device picker |
+| `Sources/ImperatorEQ/PresetManagerView.swift` | Preset list and editing |
+| `Sources/ImperatorEQ/AboutPanel.swift` | About panel |
+| `Sources/ImperatorEQ/AboutCheck.swift` | Brandbook gate for the About panel |
+| `Sources/ImperatorEQ/DriverInstaller.swift` | Installs the bundled BlackHole driver |
+| `Sources/ImperatorEQ/Theme.swift` | `AppColors`, the Imperator palette |
+| `docs/` | Notes from the audio engine investigation |
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+## Known limits
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+The AUHAL render callback can stop silently after somewhere between 5 and 30 minutes without
+reporting an error. A watchdog restarts the engine every 4 minutes to work around it. The
+investigation is written up in [docs/AUDIO_ENGINE_INVESTIGATION.md](docs/AUDIO_ENGINE_INVESTIGATION.md).
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+The app is not notarized, so every machine needs the right-click **Open** on first launch.
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+## Third-party
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
-
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
-
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
-
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
-
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+Audio loopback uses [BlackHole](https://github.com/ExistentialAudio/BlackHole) 0.6.1 by
+Existential Audio, MIT licensed and bundled unmodified inside the app at
+`Resources/BlackHole2ch.driver`. Its licence travels with it at
+`Contents/Resources/LICENSE` inside that bundle.
 
 ## License
-For open source projects, say how it is licensed.
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+MIT. See [LICENSE](LICENSE).
