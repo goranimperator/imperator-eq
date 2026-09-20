@@ -5,13 +5,11 @@ import Combine
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
-    private var popover: NSPopover!
+    private var panel: MenuBarPanel!
     private var eqStore: EQStore!
     private var audioEngine: AudioEngine!
-    private var eventMonitor: Any?
     private var cancellables = Set<AnyCancellable>()
 
-    private let popoverHeight: CGFloat = 495
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.appearance = NSAppearance(named: .darkAqua)
@@ -26,9 +24,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         audioEngine.setup(store: eqStore)
 
-        eventMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
-            self?.closePopover()
-        }
+        // The click-outside dismissal lives in MenuBarPanel now, which owns
+        // the same monitor plus the exception for the status item's own click.
+        // This one closed the panel on that click too and raced the toggle.
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -47,11 +45,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func setupPopover() {
-        popover = NSPopover()
-        popover.contentSize = NSSize(width: 340, height: popoverHeight)
-        popover.behavior = .transient
-        popover.animates = true
-
         let quitAction = { [weak self] in
             self?.audioEngine.stop()
             NSApplication.shared.terminate(nil)
@@ -61,12 +54,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.closePopover()
         }
 
-        popover.contentViewController = NSHostingController(
-            rootView: PopoverContentView(quitAction: quitAction, dismissAction: dismissAction)
+        // A MenuBarPanel rather than an NSPopover. macOS 27 draws its own menu
+        // bar panels as plain rounded rectangles: a 17.50 pt corner, no arrow
+        // and no animation, measured off Control Centre's Wi-Fi panel. An
+        // NSPopover draws none of that and exposes none of it for adjustment.
+        panel = MenuBarPanel(
+            content: PopoverContentView(quitAction: quitAction, dismissAction: dismissAction)
                 .environmentObject(eqStore)
-                .environmentObject(audioEngine)
+                .environmentObject(audioEngine),
+            width: PopoverContentView.width
         )
-
     }
 
     private func setupAudioBindings() {
@@ -97,17 +94,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.audioEngine.toggleEnabled(enabled)
             }
             .store(in: &cancellables)
-
-        NotificationCenter.default.addObserver(forName: .imperatorPopoverResize, object: nil, queue: .main) { [weak self] note in
-            Task { @MainActor in
-                guard let self, let extra = note.userInfo?["extra"] as? CGFloat else { return }
-                self.popover.contentSize = NSSize(width: 340, height: self.popoverHeight + extra)
-            }
-        }
     }
 
     @objc private func togglePopover() {
-        if popover.isShown {
+        if panel.isShown {
             closePopover()
         } else {
             showPopover()
@@ -116,12 +106,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func showPopover() {
         guard let button = statusItem.button else { return }
-        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        panel.show(from: button)
         NSApp.activate(ignoringOtherApps: true)
     }
 
     private func closePopover() {
-        guard popover.isShown else { return }
-        popover.performClose(nil)
+        guard panel.isShown else { return }
+        panel.close()
     }
 }

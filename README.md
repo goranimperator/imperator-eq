@@ -19,7 +19,7 @@ so macOS cannot vouch for it. It is provided as is, with no warranty, under the 
 - 10 EQ bands from 32 Hz to 16 kHz, plus or minus 12 dB each
 - Volume boost up to 200% and left/right balance
 - Named presets you can save, rename, reorder and delete
-- Output device switching from the popover
+- Output device switching from the panel
 - Runs in the menu bar with no Dock icon, and can open at login
 
 ## Install
@@ -38,7 +38,7 @@ administrator password once.
 microphone access the first time the equaliser starts. The app records nothing and never
 touches the built-in microphone; the permission covers the loopback capture of your own
 system audio. Without it macOS refuses to open the audio stream and the EQ stays inactive,
-though the menu bar icon and the popover still work. If you dismissed the prompt, grant it
+though the menu bar icon and the panel still work. If you dismissed the prompt, grant it
 under **System Settings > Privacy & Security > Microphone**.
 
 While the EQ is running, macOS shows the orange microphone indicator in the menu bar. That is
@@ -49,10 +49,18 @@ the loopback capture, not the built-in microphone.
 
 ## Use
 
-Click the waveform icon in the menu bar. The switch in the header turns processing on and
+Click the waveform icon in the menu bar to open the panel. The switch in the header turns processing on and
 off. Drag the band sliders to shape the sound, or pick a preset. **Reset** returns every band
 to flat. The output device list picks where the processed audio goes, and **Open at Login**
 starts the app with the Mac.
+
+## The menu bar panel
+
+The panel is drawn by the app, not by `NSPopover`. macOS 27 draws its own menu bar panels as
+plain rounded rectangles with no arrow and no open or close animation, and `NSPopover` draws
+neither that shape nor that corner and offers no way to set one. The measurements behind the
+corner radius, and the reason the constant is not the number it draws, are written down in
+`Sources/ImperatorEQ/MenuBarPanel.swift`.
 
 ## How it works
 
@@ -120,12 +128,13 @@ gh release create vx.y.z "Imperator-EQ-x.y.z.zip" --title "Imperator EQ x.y.z"
 | Path | What lives there |
 | --- | --- |
 | `Sources/ImperatorEQ/main.swift` | Entry point and the `--about-check` gate |
-| `Sources/ImperatorEQ/AppDelegate.swift` | Status item, popover, bindings |
-| `Sources/ImperatorEQ/StatusItemIcon.swift` | The app glyph, shared by the menu bar item and the popover header |
+| `Sources/ImperatorEQ/AppDelegate.swift` | Status item, panel, bindings |
+| `Sources/ImperatorEQ/MenuBarPanel.swift` | The menu bar surface, drawn by the app rather than by `NSPopover` |
+| `Sources/ImperatorEQ/StatusItemIcon.swift` | The app glyph, shared by the menu bar item and the panel header |
 | `Sources/ImperatorEQ/AudioEngine.swift` | Aggregate device, AUHAL and EQ setup, render callbacks, recovery, watchdog |
 | `Sources/ImperatorEQ/AudioRecovery` (in `AudioEngine.swift`) | Restores the default output device after a crash |
 | `Sources/ImperatorEQ/EQStore.swift` | UI state and persistence to Application Support |
-| `Sources/ImperatorEQ/PopoverContentView.swift` | Popover layout, footer, launch-at-login toggle |
+| `Sources/ImperatorEQ/PopoverContentView.swift` | Panel layout, footer, launch-at-login toggle |
 | `Sources/ImperatorEQ/EQBandsView.swift` | The band sliders |
 | `Sources/ImperatorEQ/EQSlider.swift` | The slider control |
 | `Sources/ImperatorEQ/OutputDeviceView.swift` | Output device picker |

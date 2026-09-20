@@ -1,48 +1,35 @@
 import SwiftUI
 import ServiceManagement
 
-extension Notification.Name {
-    static let imperatorPopoverResize = Notification.Name("imperatorPopoverResize")
-}
-
 struct PopoverContentView: View {
     @EnvironmentObject var store: EQStore
     @EnvironmentObject var engine: AudioEngine
     let quitAction: () -> Void
     let dismissAction: () -> Void
 
+    static let width: CGFloat = 340
+
     var body: some View {
         VStack(spacing: 0) {
             headerView
             Divider()
-            ScrollView {
-                VStack(spacing: 16) {
-                    outputDeviceSection
-                    volumeSection
-                    balanceSection
-                    eqSection
-                    presetSection
-                }
-                .padding(16)
+            VStack(spacing: 16) {
+                outputDeviceSection
+                volumeSection
+                balanceSection
+                eqSection
+                presetSection
             }
+            .padding(16)
             Divider()
             footerView
         }
-        .frame(width: 340)
-        .background(.black.opacity(0.15))
-        .onChange(of: store.presetsExpanded) { _ in postResizeNotification() }
-        .onChange(of: store.outputDevicesExpanded) { _ in postResizeNotification() }
-    }
-
-    private func postResizeNotification() {
-        var extra: CGFloat = 0
-        if store.presetsExpanded {
-            extra += CGFloat(store.presets.count) * 28 + 40
-        }
-        if store.outputDevicesExpanded {
-            extra += CGFloat(engine.availableOutputDevices.count) * 28 + 8
-        }
-        NotificationCenter.default.post(name: .imperatorPopoverResize, object: nil, userInfo: ["extra": extra])
+        .frame(width: PopoverContentView.width)
+        // No scroll view and no height cap: the popover is exactly as tall as
+        // what is in it, so expanding a section grows the window instead of
+        // scrolling inside a fixed box.
+        .fixedSize(horizontal: false, vertical: true)
+        .background(AppColors.popoverBackground)
     }
 
     /// Drawn once. The header is rebuilt on every state change and the glyph
@@ -50,7 +37,7 @@ struct PopoverContentView: View {
     private static let headerIcon = StatusItemIcon.make(size: 16)
 
     private var headerView: some View {
-        HStack(alignment: .center, spacing: 6) {
+        HStack(alignment: .center, spacing: 8) {
             // Brandbook 16.1 keeps the sigil out of the header; this is the
             // app's own icon, the same glyph the menu bar item draws.
             Image(nsImage: PopoverContentView.headerIcon)

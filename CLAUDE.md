@@ -45,8 +45,10 @@ System audio → BlackHole 2ch (set as default output)
 
 - **AudioEngine.swift** — Core audio: creates aggregate device, configures AUHAL + AUNBandEQ, render callbacks (real-time thread), device switching, crash recovery (`AudioRecovery`), preventive watchdog (restarts every 4 min to work around silent AUHAL stalls)
 - **EQStore.swift** — `@MainActor ObservableObject` with all UI state (`bands`, `volume`, `balance`, `isEnabled`, `presets`). Persists to `state.json`/`presets.json` in Application Support. Auto-saves via Combine debounce (1s)
-- **AppDelegate.swift** — Status bar item, NSPopover (340pt wide, `.transient`), Combine bindings from EQStore → AudioEngine
-- **PopoverContentView.swift** — Main SwiftUI layout: header, output devices, volume, balance, EQ bands, presets, footer. Posts `.imperatorPopoverResize` notification when collapsible sections expand/collapse
+- **AppDelegate.swift** — Status bar item, the `MenuBarPanel` (340pt wide), Combine bindings from EQStore → AudioEngine. It owns no click or key monitors: the panel does
+- **PopoverContentView.swift** — Main SwiftUI layout: header, output devices, volume, balance, EQ bands, presets, footer. No scroll view and no height cap: `.fixedSize(horizontal: false, vertical: true)` makes the panel exactly as tall as its content, so expanding a section grows the window. The old `.imperatorPopoverResize` notification, which guessed the extra height from preset and device counts, is gone
+- **MenuBarPanel.swift** — The menu bar surface, drawn by the app instead of by `NSPopover`. See the section below before changing any number in it
+- **StatusItemIcon.swift** — The app glyph, shared by the menu bar item (18pt) and the panel header (16pt)
 - **Theme.swift** — `AppColors` enum with brand colors per Imperator brandbook
 - **AboutPanel.swift** — Brandbook 10 About panel. `makePanel()` is split out of `show()` so the gate measures the real window. The SwiftUI view must carry a width but **no height**: an explicit height makes the content report its overflow and the window grows to match (292pt instead of 260pt)
 - **AboutCheck.swift** — `--about-check`, the brandbook gate for that panel
@@ -66,10 +68,39 @@ System audio → BlackHole 2ch (set as default output)
 Colors and UI must follow the Imperator Apps BrandBook (separate repo). Key rules:
 - Color enum is `AppColors` (not `Theme`), brand color `#A01818`
 - Never use bare `Color.accentColor` — always `AppColors.brand`
-- Popover width: 340pt
+- Panel width: 340pt
 - Dark mode forced: `NSApp.appearance = NSAppearance(named: .darkAqua)`
 - `UserDefaults.standard.set(0, forKey: "AppleAccentColor")` at launch
-- Toggle: `.switch` style, scale 0.55, frame 36x20, tint `AppColors.brand`
+- Toggle: `.switch` style, scale 0.55, tint `AppColors.brand`, `.labelsHidden()`, and **no** `.frame`. Brandbook 7.2: the switch is 54x24pt on macOS 27 and `scaleEffect(0.55)` gives 29.7x13.2, so a 36x20 frame is invisible padding that reads as a size guarantee it does not give. No toggle gets a cursor
+
+## The menu bar panel
+
+`MenuBarPanel` draws the menu bar surface itself. Do not put `NSPopover` back, and do not
+round any of the numbers in that file: each one was measured against what macOS 27 draws.
+
+- **`cornerRadius = 18.25`, which *draws* 17.50pt.** The target is Control Centre's Wi-Fi
+  panel on macOS 27: captured with `screencapture -o -l` and fitted on its bottom corner it
+  measures 35.0 device pixels, 17.50pt, rms 0.38, at 309 x 290 drawn points. The constant sits
+  higher than the target because `NSVisualEffectView` blends its edge and draws about 0.75pt
+  tighter than the radius it is given. Measured both ways on this app's own panel: at 17.5 it
+  drew 16.75, at 18.25 it draws 17.50.
+- **Circular, not `.continuous`.** The Wi-Fi panel fits a circle at n=2.2.
+- **A window corner, not a popover one.** A plain titled window measures 17.25 by the same
+  method. `NSPopover` draws 26.25pt from a binary stamped `sdk 27.0` and 9.5pt from one
+  stamped `sdk 14.0`, and exposes no radius to set.
+- **No arrow and no animation.** macOS 27 puts its own menu bar panels up and takes them down
+  instantly, and Control Centre's Wi-Fi panel is a plain rounded rectangle with no arrow.
+- **The panel owns the dismissal.** Its global click monitor skips clicks inside its own frame
+  and inside the status item's window, because the first click into an inactive accessory app
+  reaches a global monitor too and would otherwise close the panel out from under the click, or
+  race the status item's toggle and reopen what it just closed. A local monitor takes Escape,
+  and `canBecomeKey` is overridden because a borderless panel refuses key status by default.
+- The surface is `NSVisualEffectView` with `.popover` material and `.behindWindow` blending.
+  The SwiftUI content lays `AppColors.popoverBackground` over it.
+
+To re-measure: build, install, open the panel, capture the real window with
+`screencapture -x -o -l <window id>` and fit the corner profile against a circle. Do not
+measure a render.
 
 ## Known Issue
 
