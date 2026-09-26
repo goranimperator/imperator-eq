@@ -29,10 +29,7 @@ struct EQBandColumn: View {
     let width: CGFloat
     let isEnabled: Bool
 
-    @State private var isDragging = false
-
     private let maxGain: Float = 12.0
-    private let brandRed = AppColors.brand
 
     private var normalizedGain: CGFloat {
         CGFloat((band.gain + maxGain) / (2 * maxGain))
@@ -77,13 +74,9 @@ struct EQBandColumn: View {
             .gesture(
                 DragGesture(minimumDistance: 2)
                     .onChanged { value in
-                        isDragging = true
                         let normalizedY = 1.0 - (value.location.y / maxHeight)
                         let clamped = max(0.0, min(1.0, normalizedY))
                         band.gain = Float(clamped) * 2 * maxGain - maxGain
-                    }
-                    .onEnded { _ in
-                        isDragging = false
                     }
             )
 

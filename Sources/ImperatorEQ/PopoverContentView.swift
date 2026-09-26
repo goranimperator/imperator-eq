@@ -14,18 +14,19 @@ struct PopoverContentView: View {
             headerView
             Divider()
             VStack(spacing: 16) {
-                outputDeviceSection
+                engineNotice
+                OutputDeviceView()
                 volumeSection
                 balanceSection
                 eqSection
-                presetSection
+                PresetManagerView()
             }
             .padding(16)
             Divider()
             footerView
         }
         .frame(width: PopoverContentView.width)
-        // No scroll view and no height cap: the popover is exactly as tall as
+        // No scroll view and no height cap: the panel is exactly as tall as
         // what is in it, so expanding a section grows the window instead of
         // scrolling inside a fixed box.
         .fixedSize(horizontal: false, vertical: true)
@@ -50,21 +51,68 @@ struct PopoverContentView: View {
             Spacer()
 
             Toggle("", isOn: $store.isEnabled)
-                .toggleStyle(.switch)
-                .scaleEffect(0.55)
-                .tint(AppColors.brand)
-                .labelsHidden()
+                .brandSwitch()
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
     }
 
+    /// Shown only when the switch is on but the EQ is not processing, so the
+    /// switch never claims something the engine is not doing. Nothing shows
+    /// while starting: that takes a fraction of a second.
+    ///
+    /// Text is `.primary` and `.secondary`, not brand red: red measures 1.73:1
+    /// on this panel, below the 4.5:1 caption text needs. The action is a
+    /// system bordered button, the brandbook 7.11 action, because a resting
+    /// HoverButton measures 3.35:1.
+    @ViewBuilder
+    private var engineNotice: some View {
+        switch engine.state {
+        case .waitingForAccess:
+            // The settings button too: the prompt shows once, and access that
+            // is reset while the app runs has no prompt on screen.
+            notice(title: "Waiting for your permission",
+                   body: "Allow Imperator EQ in the macOS prompt, or in Privacy Settings if no prompt "
+                       + "is showing. The EQ starts as soon as you do.",
+                   opensSettings: true)
+        case .accessDenied:
+            notice(title: "System audio access is off",
+                   body: "Imperator EQ needs it to hear what your Mac plays. It records nothing, "
+                       + "and your sound plays as normal until you turn it on.",
+                   opensSettings: true)
+        case .failed(let deviceName):
+            notice(title: "The EQ can\u{2019}t run on \(deviceName)",
+                   body: "Your sound plays as normal on it. Choose another output to use the EQ.",
+                   opensSettings: false)
+        case .off, .starting, .running:
+            EmptyView()
+        }
+    }
+
+    private func notice(title: String, body: String, opensSettings: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.primary)
+                Text(body)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if opensSettings {
+                Button("Open Privacy Settings") { engine.openAccessSettings() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     private var eqSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("EQUALIZER")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
+                SectionTitle("EQUALIZER")
 
                 Spacer()
 
@@ -80,56 +128,46 @@ struct PopoverContentView: View {
     }
 
     private var volumeSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("VOLUME BOOST")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Text("\(Int(store.volume * 100))%")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-                    .monospacedDigit()
-            }
-
-            HStack(spacing: 8) {
-                Image(systemName: "speaker.fill")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-                    .frame(width: 16)
-
-                EQSlider(value: $store.volume, range: 0...2, snapToCenter: true)
-
-                Image(systemName: "speaker.wave.3.fill")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-                    .frame(width: 16)
-            }
+        sliderSection("VOLUME BOOST", value: "\(Int(store.volume * 100))%", $store.volume, in: 0...2) {
+            Image(systemName: "speaker.fill")
+        } trailing: {
+            Image(systemName: "speaker.wave.3.fill")
         }
     }
 
     private var balanceSection: some View {
+        sliderSection("BALANCE", value: balanceLabel, $store.balance, in: -1...1) {
+            Text("L")
+        } trailing: {
+            Text("R")
+        }
+    }
+
+    /// A title with its value on the right, over a slider with a small label
+    /// at each end: volume and balance.
+    private func sliderSection<Leading: View, Trailing: View>(
+        _ title: String, value: String, _ binding: Binding<Float>, in range: ClosedRange<Float>,
+        @ViewBuilder leading: () -> Leading, @ViewBuilder trailing: () -> Trailing
+    ) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text("BALANCE")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
+                SectionTitle(title)
                 Spacer()
-                Text(balanceLabel)
+                Text(value)
                     .font(.caption)
                     .foregroundStyle(.tertiary)
                     .monospacedDigit()
             }
 
             HStack(spacing: 8) {
-                Text("L")
+                leading()
                     .font(.caption)
                     .foregroundStyle(.tertiary)
                     .frame(width: 16)
 
-                EQSlider(value: $store.balance, range: -1...1, centerNotch: true, snapToCenter: true)
+                EQSlider(value: binding, range: range, snapToCenter: true)
 
-                Text("R")
+                trailing()
                     .font(.caption)
                     .foregroundStyle(.tertiary)
                     .frame(width: 16)
@@ -147,22 +185,14 @@ struct PopoverContentView: View {
         }
     }
 
-    private var presetSection: some View {
-        PresetManagerView()
-    }
-
-    private var outputDeviceSection: some View {
-        OutputDeviceView()
-    }
-
     private var footerView: some View {
         HStack(spacing: 12) {
             LaunchAtLoginToggle()
 
             Spacer()
 
-            // The popover is .transient, so a click inside it does not close
-            // it. Without the dismiss the About panel opens behind the popover.
+            // The panel sits at the pop-up menu level, above ordinary windows,
+            // so it closes first or the About panel would open behind it.
             HoverButton {
                 dismissAction()
                 AboutPanel.show()
@@ -184,7 +214,6 @@ struct PopoverContentView: View {
 
 struct LaunchAtLoginToggle: View {
     @State private var isEnabled = SMAppService.mainApp.status == .enabled
-    @State private var isHovered = false
 
     var body: some View {
         HStack(spacing: 6) {
@@ -192,13 +221,8 @@ struct LaunchAtLoginToggle: View {
                 .font(.caption)
                 .foregroundStyle(.primary)
             Toggle("", isOn: $isEnabled)
-                .toggleStyle(.switch)
-                .scaleEffect(0.55)
-                .tint(AppColors.brand)
-                .labelsHidden()
-                // The two-parameter onChange is macOS 14, and this app still
-                // deploys to 13, so the deprecated one-parameter form stays.
-                .onChange(of: isEnabled) { newValue in
+                .brandSwitch()
+                .onChange(of: isEnabled) { _, newValue in
                     do {
                         if newValue {
                             try SMAppService.mainApp.register()
@@ -210,16 +234,13 @@ struct LaunchAtLoginToggle: View {
                     }
                 }
         }
-        .opacity(isHovered ? 1.0 : 0.45)
-        .animation(.easeInOut(duration: 0.2), value: isHovered)
-        .onHover { isHovered = $0 }
+        .hoverDimmed()
     }
 }
 
 struct HoverButton<Label: View>: View {
     let action: () -> Void
     @ViewBuilder let label: () -> Label
-    @State private var isHovered = false
 
     var body: some View {
         Button(action: action) {
@@ -227,20 +248,94 @@ struct HoverButton<Label: View>: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(.primary)
-        .opacity(isHovered ? 1.0 : 0.45)
-        .animation(.easeInOut(duration: 0.2), value: isHovered)
-        .onHover { isHovered = $0 }
+        .hoverDimmed()
+    }
+}
+
+// MARK: - Shared pieces of the panel
+
+/// The small title each section of the panel starts with.
+struct SectionTitle: View {
+    let text: String
+
+    init(_ text: String) { self.text = text }
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(.secondary)
+    }
+}
+
+/// A section title that opens and closes the rows under it.
+struct CollapsibleHeader: View {
+    let title: String
+    @Binding var isExpanded: Bool
+
+    var body: some View {
+        Button(action: { isExpanded.toggle() }) {
+            HStack {
+                SectionTitle(title)
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// The dot that marks the active output or preset.
+struct ActiveDot: View {
+    let isActive: Bool
+
+    var body: some View {
+        Circle()
+            .fill(isActive ? AppColors.brand : Color.gray.opacity(0.3))
+            .frame(width: 8, height: 8)
+    }
+}
+
+/// Full opacity under the pointer, 45% at rest.
+private struct HoverDimmed: ViewModifier {
+    @State private var isHovered = false
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(isHovered ? 1.0 : 0.45)
+            .animation(.easeInOut(duration: 0.2), value: isHovered)
+            .onHover { isHovered = $0 }
     }
 }
 
 extension View {
-    func cursor(_ cursor: NSCursor) -> some View {
-        onHover { inside in
-            if inside {
-                cursor.push()
-            } else {
-                NSCursor.pop()
-            }
-        }
+    /// Brandbook 7.2's switch: the system switch scaled to 0.55, brand tint, no
+    /// label, and no frame, since a frame would only add invisible padding.
+    func brandSwitch() -> some View {
+        toggleStyle(.switch)
+            .scaleEffect(0.55)
+            .tint(AppColors.brand)
+            .labelsHidden()
+    }
+
+    func hoverDimmed() -> some View {
+        modifier(HoverDimmed())
+    }
+
+    /// A row in the output or preset list: its padding, the brand wash under
+    /// the pointer, and a tap anywhere on it.
+    func listRow(isHovered: Binding<Bool>, onTap: @escaping () -> Void) -> some View {
+        padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(isHovered.wrappedValue ? AppColors.brand.opacity(0.1) : Color.clear)
+            )
+            .contentShape(Rectangle())
+            .onTapGesture(perform: onTap)
+            .onHover { isHovered.wrappedValue = $0 }
     }
 }

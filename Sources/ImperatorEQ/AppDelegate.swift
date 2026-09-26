@@ -10,7 +10,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var audioEngine: AudioEngine!
     private var cancellables = Set<AnyCancellable>()
 
-
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.appearance = NSAppearance(named: .darkAqua)
         UserDefaults.standard.set(0, forKey: "AppleAccentColor")
@@ -19,19 +18,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         eqStore = EQStore()
         audioEngine = AudioEngine()
         setupStatusItem()
-        setupPopover()
+        setupPanel()
         setupAudioBindings()
 
         audioEngine.setup(store: eqStore)
-
-        // The click-outside dismissal lives in MenuBarPanel now, which owns
-        // the same monitor plus the exception for the status item's own click.
-        // This one closed the panel on that click too and raced the toggle.
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         eqStore.saveState()
-        audioEngine.stop()
+        audioEngine.shutdown()
     }
 
     private func setupStatusItem() {
@@ -40,24 +35,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         button.image = StatusItemIcon.make()
         button.toolTip = "Imperator EQ"
-        button.action = #selector(togglePopover)
+        button.action = #selector(togglePanel)
         button.target = self
     }
 
-    private func setupPopover() {
-        let quitAction = { [weak self] in
-            self?.audioEngine.stop()
+    private func setupPanel() {
+        // applicationWillTerminate stops the engine on the way out.
+        let quitAction = {
             NSApplication.shared.terminate(nil)
         }
 
         let dismissAction: () -> Void = { [weak self] in
-            self?.closePopover()
+            self?.closePanel()
         }
 
-        // A MenuBarPanel rather than an NSPopover. macOS 27 draws its own menu
-        // bar panels as plain rounded rectangles: a 17.50 pt corner, no arrow
-        // and no animation, measured off Control Centre's Wi-Fi panel. An
-        // NSPopover draws none of that and exposes none of it for adjustment.
+        // A MenuBarPanel rather than an NSPopover: see MenuBarPanel.swift.
         panel = MenuBarPanel(
             content: PopoverContentView(quitAction: quitAction, dismissAction: dismissAction)
                 .environmentObject(eqStore)
@@ -67,50 +59,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func setupAudioBindings() {
-        eqStore.$bands
+        // @Published fires in willSet, while the store still holds the old
+        // values, so the new ones come from the publishers and go straight to
+        // the engine. No hop through RunLoop.main: its default mode does not
+        // run while a slider is dragged, and the sound would change only on
+        // mouse-up.
+        Publishers.CombineLatest3(eqStore.$bands, eqStore.$volume, eqStore.$balance)
             .dropFirst()
-            .sink { [weak self] bands in
-                self?.audioEngine.updateEQ(bands: bands)
+            .sink { [weak self] bands, volume, balance in
+                self?.audioEngine.settingsChanged(EQSettings(bands: bands, volume: volume, balance: balance))
             }
             .store(in: &cancellables)
 
-        eqStore.$volume
-            .dropFirst()
-            .sink { [weak self] volume in
-                self?.audioEngine.updateVolume(volume)
-            }
-            .store(in: &cancellables)
-
-        eqStore.$balance
-            .dropFirst()
-            .sink { [weak self] balance in
-                self?.audioEngine.updateBalance(balance)
-            }
-            .store(in: &cancellables)
-
+        // reconcile() reads the store, so it waits for the change to land. The
+        // main queue is served while a control tracks the mouse.
         eqStore.$isEnabled
             .dropFirst()
-            .sink { [weak self] enabled in
-                self?.audioEngine.toggleEnabled(enabled)
-            }
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.audioEngine.reconcile() }
             .store(in: &cancellables)
     }
 
-    @objc private func togglePopover() {
+    @objc private func togglePanel() {
         if panel.isShown {
-            closePopover()
+            closePanel()
         } else {
-            showPopover()
+            showPanel()
         }
     }
 
-    private func showPopover() {
+    private func showPanel() {
         guard let button = statusItem.button else { return }
+        audioEngine.panelOpened()
         panel.show(from: button)
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    private func closePopover() {
+    private func closePanel() {
         guard panel.isShown else { return }
         panel.close()
     }

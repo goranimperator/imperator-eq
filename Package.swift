@@ -3,10 +3,11 @@ import PackageDescription
 
 let package = Package(
     name: "ImperatorEQ",
-    // Stays at macOS 13 so the public release keeps working on older systems.
-    // The SDK stamp that decides which generation of AppKit controls gets drawn
-    // is applied by build.sh through -Xlinker -platform_version, not here.
-    platforms: [.macOS(.v13)],
+    // macOS 14.2 is the first release with Core Audio process taps
+    // (AudioHardwareCreateProcessTap), which is how the app captures what the
+    // Mac plays. The SDK stamp that decides which generation of AppKit controls
+    // gets drawn is applied by build.sh through -Xlinker -platform_version.
+    platforms: [.macOS("14.2")],
     targets: [
         .executableTarget(
             name: "ImperatorEQ",

@@ -19,12 +19,12 @@
 	<key>CFBundleVersion</key>
 	<string>35</string>
 	<key>LSMinimumSystemVersion</key>
-	<string>13.0</string>
+	<string>14.2</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>Imperator EQ runs the sound your Mac plays through its equaliser. It records nothing and keeps no audio.</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>Copyright © 1986 Goran Imperator. MIT License.</string>
-	<key>NSMicrophoneUsageDescription</key>
-	<string>Imperator EQ needs microphone access to visualize audio output.</string>
 </dict>
 </plist>

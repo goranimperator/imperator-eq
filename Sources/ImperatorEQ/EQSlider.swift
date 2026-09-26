@@ -3,7 +3,6 @@ import SwiftUI
 struct EQSlider: View {
     @Binding var value: Float
     let range: ClosedRange<Float>
-    var centerNotch: Bool = false
     var snapToCenter: Bool = false
 
     private let trackHeight: CGFloat = 4
@@ -64,7 +63,6 @@ struct EQSlider: View {
                         with: .color(Color.white.opacity(tickOpacity))
                     )
                 }
-
             }
 
             Circle()

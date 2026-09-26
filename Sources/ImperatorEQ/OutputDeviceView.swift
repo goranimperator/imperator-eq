@@ -6,20 +6,7 @@ struct OutputDeviceView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Button(action: { store.outputDevicesExpanded.toggle() }) {
-                HStack {
-                    Text("OUTPUT DEVICE")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .rotationEffect(.degrees(store.outputDevicesExpanded ? 90 : 0))
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
+            CollapsibleHeader(title: "OUTPUT DEVICE", isExpanded: $store.outputDevicesExpanded)
 
             if store.outputDevicesExpanded {
                 VStack(spacing: 4) {
@@ -47,22 +34,12 @@ struct DeviceRowView: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            Circle()
-                .fill(isActive ? AppColors.brand : Color.gray.opacity(0.3))
-                .frame(width: 8, height: 8)
+            ActiveDot(isActive: isActive)
             Text(name)
                 .font(.system(.body, weight: isActive ? .medium : .regular))
                 .lineLimit(1)
             Spacer()
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(isHovered ? AppColors.brand.opacity(0.1) : Color.clear)
-        )
-        .contentShape(Rectangle())
-        .onTapGesture(perform: onSelect)
-        .onHover { isHovered = $0 }
+        .listRow(isHovered: $isHovered, onTap: onSelect)
     }
 }

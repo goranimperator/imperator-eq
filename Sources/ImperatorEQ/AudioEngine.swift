@@ -1,174 +1,7 @@
-import AVFoundation
-import AudioToolbox
+import AppKit
 import CoreAudio
 import Foundation
 import os
-
-// Global atomic counters — written by the real-time render thread,
-// read by the watchdog on a separate queue. No actor isolation involved.
-private let heartbeat = OSAllocatedUnfairLock(initialState: Int64(0))
-private let errorCount = OSAllocatedUnfairLock(initialState: Int64(0))
-
-// Shared state between audio thread and main thread
-// Float reads/writes are atomic on Apple Silicon
-private final class RenderContext {
-    var ioUnit: AudioUnit
-    var eqUnit: AudioUnit
-    var volume: Float = 1.0
-    var balance: Float = 0.0
-    init(ioUnit: AudioUnit, eqUnit: AudioUnit) {
-        self.ioUnit = ioUnit
-        self.eqUnit = eqUnit
-    }
-}
-
-// MARK: - Crash Recovery
-
-/// Persists the real output device UID to disk while the engine is running.
-/// If the app is force-killed (SIGKILL), the next launch can read this file
-/// and restore audio output from BlackHole back to the real device.
-private enum AudioRecovery {
-    static let recoveryURL: URL = {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        return appSupport.appendingPathComponent("ImperatorEQ/audio_recovery.txt")
-    }()
-
-    static func saveRealOutputUID(_ uid: String) {
-        try? uid.write(to: recoveryURL, atomically: true, encoding: .utf8)
-    }
-
-    static func clear() {
-        try? FileManager.default.removeItem(at: recoveryURL)
-    }
-
-    static func recoverIfNeeded() {
-        guard let savedUID = try? String(contentsOf: recoveryURL, encoding: .utf8),
-              !savedUID.isEmpty else { return }
-
-        // Previous instance didn't shut down cleanly — check if BlackHole is still default
-        var deviceID = AudioDeviceID(0)
-        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
-        var addr = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        guard AudioObjectGetPropertyData(
-            AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size, &deviceID
-        ) == noErr else {
-            clear()
-            return
-        }
-
-        // Get current default UID
-        var uidAddr = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyDeviceUID,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        var uidSize = UInt32(MemoryLayout<Unmanaged<CFString>>.size)
-        var uidRef: Unmanaged<CFString>?
-        guard AudioObjectGetPropertyData(deviceID, &uidAddr, 0, nil, &uidSize, &uidRef) == noErr,
-              let currentUID = uidRef?.takeUnretainedValue() as String? else {
-            clear()
-            return
-        }
-
-        if currentUID == "BlackHole2ch_UID" || currentUID == "ImperatorEQ_Aggregate" {
-            NSLog("Recovery: BlackHole stuck as default, restoring to %@", savedUID)
-            // Find device by saved UID and restore
-            restoreDevice(uid: savedUID)
-        }
-        // Also destroy any leftover aggregate
-        destroyStaleAggregate()
-        clear()
-    }
-
-    private static func restoreDevice(uid: String) {
-        var propAddr = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDevices,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        var propSize: UInt32 = 0
-        guard AudioObjectGetPropertyDataSize(
-            AudioObjectID(kAudioObjectSystemObject), &propAddr, 0, nil, &propSize
-        ) == noErr else { return }
-        let count = Int(propSize) / MemoryLayout<AudioDeviceID>.size
-        var ids = [AudioDeviceID](repeating: 0, count: count)
-        guard AudioObjectGetPropertyData(
-            AudioObjectID(kAudioObjectSystemObject), &propAddr, 0, nil, &propSize, &ids
-        ) == noErr else { return }
-
-        for id in ids {
-            var uidAddr = AudioObjectPropertyAddress(
-                mSelector: kAudioDevicePropertyDeviceUID,
-                mScope: kAudioObjectPropertyScopeGlobal,
-                mElement: kAudioObjectPropertyElementMain
-            )
-            var uidSize = UInt32(MemoryLayout<Unmanaged<CFString>>.size)
-            var uidRef: Unmanaged<CFString>?
-            guard AudioObjectGetPropertyData(id, &uidAddr, 0, nil, &uidSize, &uidRef) == noErr,
-                  let devUID = uidRef?.takeUnretainedValue() as String?,
-                  devUID == uid else { continue }
-
-            // Found it — set as default
-            var devID = id
-            let size = UInt32(MemoryLayout<AudioDeviceID>.size)
-            var outAddr = AudioObjectPropertyAddress(
-                mSelector: kAudioHardwarePropertyDefaultOutputDevice,
-                mScope: kAudioObjectPropertyScopeGlobal,
-                mElement: kAudioObjectPropertyElementMain
-            )
-            AudioObjectSetPropertyData(AudioObjectID(kAudioObjectSystemObject), &outAddr, 0, nil, size, &devID)
-            var sysAddr = AudioObjectPropertyAddress(
-                mSelector: kAudioHardwarePropertyDefaultSystemOutputDevice,
-                mScope: kAudioObjectPropertyScopeGlobal,
-                mElement: kAudioObjectPropertyElementMain
-            )
-            AudioObjectSetPropertyData(AudioObjectID(kAudioObjectSystemObject), &sysAddr, 0, nil, size, &devID)
-            NSLog("Recovery: restored output to %@ (device %d)", uid, id)
-            return
-        }
-        NSLog("Recovery: device %@ not found, cannot restore", uid)
-    }
-
-    private static func destroyStaleAggregate() {
-        var propAddr = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDevices,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        var propSize: UInt32 = 0
-        guard AudioObjectGetPropertyDataSize(
-            AudioObjectID(kAudioObjectSystemObject), &propAddr, 0, nil, &propSize
-        ) == noErr else { return }
-        let count = Int(propSize) / MemoryLayout<AudioDeviceID>.size
-        var ids = [AudioDeviceID](repeating: 0, count: count)
-        guard AudioObjectGetPropertyData(
-            AudioObjectID(kAudioObjectSystemObject), &propAddr, 0, nil, &propSize, &ids
-        ) == noErr else { return }
-
-        for id in ids {
-            var uidAddr = AudioObjectPropertyAddress(
-                mSelector: kAudioDevicePropertyDeviceUID,
-                mScope: kAudioObjectPropertyScopeGlobal,
-                mElement: kAudioObjectPropertyElementMain
-            )
-            var uidSize = UInt32(MemoryLayout<Unmanaged<CFString>>.size)
-            var uidRef: Unmanaged<CFString>?
-            guard AudioObjectGetPropertyData(id, &uidAddr, 0, nil, &uidSize, &uidRef) == noErr,
-                  let devUID = uidRef?.takeUnretainedValue() as String?,
-                  devUID == "ImperatorEQ_Aggregate" else { continue }
-            AudioHardwareDestroyAggregateDevice(id)
-            NSLog("Recovery: destroyed stale aggregate device")
-        }
-    }
-}
-
-extension Notification.Name {
-    static let imperatorEngineStalled = Notification.Name("imperatorEngineStalled")
-}
 
 struct OutputDevice: Identifiable, Equatable {
     let id: AudioDeviceID
@@ -176,806 +9,553 @@ struct OutputDevice: Identifiable, Equatable {
     let name: String
 }
 
+/// What the engine is doing, for the panel.
+enum EngineState: Equatable {
+    /// The switch is off. Apps play straight to the device, untouched.
+    case off
+    /// The switch is on and macOS is showing the permission prompt.
+    case waitingForAccess
+    /// The switch is on, but System Audio Recording is off for this app.
+    case accessDenied
+    case starting
+    case running
+    /// The switch is on, but the current output cannot carry the EQ. Audio
+    /// plays as normal.
+    case failed(deviceName: String)
+}
+
+let engineLog = Logger(subsystem: "com.goranimperator.ImperatorEQ", category: "engine")
+
+extension EQSettings {
+    init(bands: [EQBand], volume: Float, balance: Float) {
+        self.init(gains: bands.map(\.gain), volume: volume, balance: balance)
+    }
+}
+
+extension EQStore {
+    var eqSettings: EQSettings { EQSettings(bands: bands, volume: volume, balance: balance) }
+}
+
+/// The main-thread face of the audio engine: published state for the panel,
+/// the output device list, the permission state, and the system events that
+/// decide when the engine has to be rebuilt.
+///
+/// It decides what should happen and never talks to coreaudiod itself beyond
+/// plain property reads. Building and tearing down the tap happens in
+/// `EngineController`, on its own queue.
 @MainActor
 final class AudioEngine: ObservableObject {
-    @Published var isRunning = false
-    @Published var availableOutputDevices: [OutputDevice] = []
-    @Published var activeOutputUID: String?
+    /// Prefix of this app's private aggregate devices. The HAL shows a private
+    /// aggregate to the process that made it, so the device list filters it.
+    nonisolated static let aggregateUIDPrefix = "com.goranimperator.ImperatorEQ.aggregate."
 
-    private var ioUnit: AudioUnit?
-    private var eqUnit: AudioUnit?
-    private var context: RenderContext?
-    private var contextRetained: Unmanaged<RenderContext>?
-    private var aggregateDeviceID: AudioDeviceID = 0
-    private var realOutputDeviceID: AudioDeviceID?
-    private var blackHoleDeviceID: AudioDeviceID?
-    private var defaultOutputListenerInstalled = false
-    private nonisolated(unsafe) var defaultOutputListenerBlock: AudioObjectPropertyListenerBlock?
-    private var manualOutputUID: String?
-    private var deviceListListenerInstalled = false
-    private nonisolated(unsafe) var deviceListListenerBlock: AudioObjectPropertyListenerBlock?
-    private nonisolated(unsafe) var watchdogSource: DispatchSourceTimer?
-    private let blackHoleUID = "BlackHole2ch_UID"
-    private let aggregateUID = "ImperatorEQ_Aggregate"
-    private let eqFrequencies: [Float] = [32, 64, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]
+    /// Frames per IO cycle, which sets most of the delay the EQ adds between an
+    /// app and the speaker. Measured with `--engine-check` on the built-in
+    /// speakers at 44.1 kHz, as output presentation time minus tap capture
+    /// time: 256 frames adds 15.6 ms, 512 adds 27.2 ms. Both ran without a
+    /// single late cycle and gave identical EQ results, so the lower one wins.
+    /// The HAL clamps this to what the output allows, Bluetooth included.
+    nonisolated static let bufferFrames: UInt32 = 256
 
+    @Published private(set) var state: EngineState = .off
+    @Published private(set) var availableOutputDevices: [OutputDevice] = []
+    /// The system's default output, which is where the EQ plays.
+    @Published private(set) var activeOutputUID: String?
+
+    private let controller = EngineController()
     private weak var store: EQStore?
-
-    // MARK: - Public API
-
-    func refreshOutputDevices() {
-        let knownUIDs: Set<String> = [blackHoleUID, aggregateUID]
-        var devices: [OutputDevice] = []
-        for deviceID in getAllDeviceIDs() {
-            guard let uid = getDeviceUID(deviceID) else { continue }
-            if knownUIDs.contains(uid) { continue }
-            guard getOutputChannelCount(deviceID) > 0 else { continue }
-            let transport = getDeviceTransportType(deviceID)
-            // Skip monitors
-            if transport == kAudioDeviceTransportTypeHDMI || transport == kAudioDeviceTransportTypeDisplayPort { continue }
-            let name = getDeviceName(deviceID) ?? "Unknown"
-            devices.append(OutputDevice(id: deviceID, uid: uid, name: name))
-        }
-        availableOutputDevices = devices
-    }
-
-    func selectOutputDevice(uid: String) {
-        guard let store, uid != activeOutputUID else { return }
-        NSLog("Manual device switch to %@", uid as NSString)
-        stop()
-        // Temporarily override preferred by setting the UID before start
-        manualOutputUID = uid
-        start(store: store)
-        manualOutputUID = nil
-    }
+    private var access = SystemAudioAccess.Status.unknown
+    private var askedForAccess = false
+    private var lastOutcome = EngineOutcome.stopped
+    private var accessTimer: Timer?
+    private var deviceRefreshScheduled = false
+    /// The system listeners live as long as the app.
+    private var systemListeners: [PropertyListener] = []
 
     func setup(store: EQStore) {
         self.store = store
-
-        // Recover from previous crash (restores audio if BlackHole stuck as default)
-        AudioRecovery.recoverIfNeeded()
-
-        // Install signal handlers so SIGTERM/SIGINT clean up properly
-        installSignalHandlers()
-
-        // Listen for watchdog stall notifications (posted from background queue)
-        NotificationCenter.default.addObserver(forName: .imperatorEngineStalled, object: nil, queue: .main) { [weak self] _ in
-            Task { @MainActor in
-                guard let self, let store = self.store, self.isRunning else { return }
-                NSLog("Watchdog: restarting engine after stall")
-                self.stop()
-                self.start(store: store)
-            }
+        controller.onOutcome = { [weak self] outcome in
+            Task { @MainActor in self?.handle(outcome) }
         }
-
-        if findDeviceByUID(blackHoleUID) == nil {
-            NSLog("BlackHole not found, attempting install")
-            DriverInstaller.installIfNeeded()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
-                guard let self, let store = self.store, store.isEnabled else { return }
-                self.start(store: store)
-            }
-            return
-        }
-
-        if store.isEnabled {
-            start(store: store)
-        }
-    }
-
-    private func installSignalHandlers() {
-        // SIGTERM (normal kill) and SIGINT (Ctrl-C) can be caught
-        // SIGKILL (kill -9) cannot — that's handled by AudioRecovery on next launch
-        let handler: @convention(c) (Int32) -> Void = { _ in
-            // Restore default output synchronously from signal context
-            AudioRecovery.recoverIfNeeded()
-            exit(0)
-        }
-        signal(SIGTERM, handler)
-        signal(SIGINT, handler)
-    }
-
-    /// BlackHole's loopback is an input device, and macOS 27 blocks inside
-    /// `AudioDeviceCreateIOProcID` until microphone access has been decided.
-    /// The engine starts from `applicationDidFinishLaunching`, so that block
-    /// lands on the main thread before the run loop ever draws the status item:
-    /// the app hangs with no icon and no window, and the permission prompt it
-    /// is waiting for cannot be serviced. Asking up front keeps the wait
-    /// asynchronous and the launch non-blocking.
-    ///
-    /// Returns true when the engine may proceed now. When access has not been
-    /// decided yet it returns false and re-enters `start` once the user answers.
-    private func hasMicrophoneAccess(thenRetryWith store: EQStore) -> Bool {
-        switch AVCaptureDevice.authorizationStatus(for: .audio) {
-        case .authorized:
-            return true
-        case .notDetermined:
-            AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
-                Task { @MainActor in
-                    guard granted else {
-                        NSLog("Microphone access denied, EQ processing stays off")
-                        return
-                    }
-                    self?.start(store: store)
-                }
-            }
-            return false
-        default:
-            NSLog("Microphone access denied, EQ processing stays off")
-            return false
-        }
-    }
-
-    func start(store: EQStore) {
-        // Every path into the engine goes through here, so the microphone gate
-        // belongs here rather than at each caller.
-        guard hasMicrophoneAccess(thenRetryWith: store) else { return }
-
-        guard !isRunning else { return }
-
-        guard let bhDeviceID = findDeviceByUID(blackHoleUID) else {
-            NSLog("BlackHole 2ch not found")
-            return
-        }
-        blackHoleDeviceID = bhDeviceID
-
-        // Ensure BlackHole is unmuted and at full volume — macOS persists per-device
-        // volume/mute state, and if it's muted or at 0, all audio through it is silent
-        ensureDeviceUnmuted(bhDeviceID)
-
-        // Determine output device: manual > BT > built-in > fallback
-        let realID: AudioDeviceID
-        if let uid = manualOutputUID, let found = findDeviceByUID(uid), getOutputChannelCount(found) > 0 {
-            realID = found
-        } else if let preferred = findPreferredOutputDevice() {
-            realID = preferred
-        } else if let cd = getDefaultOutputDevice(), getDeviceUID(cd) != blackHoleUID, getDeviceUID(cd) != aggregateUID {
-            realID = cd
-        } else {
-            NSLog("No real output device found")
-            return
-        }
-        activeOutputUID = getDeviceUID(realID)
-        realOutputDeviceID = realID
-        NSLog("BlackHole=%d, Output=%d", bhDeviceID, realID)
-
-        // Match sample rates
-        let outputRate = getDeviceSampleRate(realID)
-        let bhRate = getDeviceSampleRate(bhDeviceID)
-        if outputRate > 0 && bhRate != outputRate {
-            setDeviceSampleRate(bhDeviceID, sampleRate: outputRate)
-            NSLog("Matched BlackHole rate to %.0f", outputRate)
-            usleep(100_000)
-        }
-        let sampleRate = outputRate > 0 ? outputRate : 44100
-
-        // Clean up leftover aggregate
-        if let existing = findDeviceByUID(aggregateUID) {
-            AudioHardwareDestroyAggregateDevice(existing)
-        }
-
-        let realUID = getDeviceUID(realID) ?? ""
-        guard !realUID.isEmpty else { return }
-
-        // Create aggregate: real output FIRST (its output channels map to 0-1)
-        let aggID = createAggregateDevice(outputUID: realUID, inputUID: blackHoleUID)
-        guard aggID != 0 else {
-            NSLog("Failed to create aggregate device")
-            return
-        }
-        aggregateDeviceID = aggID
-        NSLog("Aggregate=%d, outputUID=%@, inputUID=%@", aggID, realUID as NSString, blackHoleUID as NSString)
-        NSLog("Aggregate output channels: %d", getOutputChannelCount(aggID))
-
-        // Create AUHAL
-        var ioDesc = AudioComponentDescription(
-            componentType: kAudioUnitType_Output,
-            componentSubType: kAudioUnitSubType_HALOutput,
-            componentManufacturer: kAudioUnitManufacturer_Apple,
-            componentFlags: 0, componentFlagsMask: 0
-        )
-        guard let ioComp = AudioComponentFindNext(nil, &ioDesc) else { return }
-        var ioRef: AudioUnit?
-        guard AudioComponentInstanceNew(ioComp, &ioRef) == noErr, let ioU = ioRef else { return }
-
-        // Enable input on element 1
-        var enableIn: UInt32 = 1
-        AudioUnitSetProperty(ioU, kAudioOutputUnitProperty_EnableIO,
-                              kAudioUnitScope_Input, 1, &enableIn, 4)
-
-        // Set aggregate device
-        var devID = aggID
-        AudioUnitSetProperty(ioU, kAudioOutputUnitProperty_CurrentDevice,
-                              kAudioUnitScope_Global, 0, &devID,
-                              UInt32(MemoryLayout<AudioDeviceID>.size))
-
-        // Non-interleaved float stereo format
-        var streamFmt = AudioStreamBasicDescription(
-            mSampleRate: sampleRate,
-            mFormatID: kAudioFormatLinearPCM,
-            mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsNonInterleaved | kAudioFormatFlagIsPacked,
-            mBytesPerPacket: 4, mFramesPerPacket: 1, mBytesPerFrame: 4,
-            mChannelsPerFrame: 2, mBitsPerChannel: 32, mReserved: 0
-        )
-        let fmtSize = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
-        AudioUnitSetProperty(ioU, kAudioUnitProperty_StreamFormat,
-                              kAudioUnitScope_Output, 1, &streamFmt, fmtSize)
-        AudioUnitSetProperty(ioU, kAudioUnitProperty_StreamFormat,
-                              kAudioUnitScope_Input, 0, &streamFmt, fmtSize)
-
-        // Create N-Band EQ
-        var eqDesc = AudioComponentDescription(
-            componentType: kAudioUnitType_Effect,
-            componentSubType: kAudioUnitSubType_NBandEQ,
-            componentManufacturer: kAudioUnitManufacturer_Apple,
-            componentFlags: 0, componentFlagsMask: 0
-        )
-        guard let eqComp = AudioComponentFindNext(nil, &eqDesc) else {
-            AudioComponentInstanceDispose(ioU)
-            return
-        }
-        var eqRef: AudioUnit?
-        guard AudioComponentInstanceNew(eqComp, &eqRef) == noErr, let eqU = eqRef else {
-            AudioComponentInstanceDispose(ioU)
-            return
-        }
-
-        // Set EQ format
-        AudioUnitSetProperty(eqU, kAudioUnitProperty_StreamFormat,
-                              kAudioUnitScope_Input, 0, &streamFmt, fmtSize)
-        AudioUnitSetProperty(eqU, kAudioUnitProperty_StreamFormat,
-                              kAudioUnitScope_Output, 0, &streamFmt, fmtSize)
-
-        // Set number of EQ bands
-        var numBands: UInt32 = 10
-        AudioUnitSetProperty(eqU, 2200, // kAUNBandEQProperty_NumberOfBands
-                              kAudioUnitScope_Global, 0, &numBands, 4)
-
-        // Create render context
-        let ctx = RenderContext(ioUnit: ioU, eqUnit: eqU)
-        ctx.volume = store.volume
-        ctx.balance = store.balance
-        self.context = ctx
-        let retained = Unmanaged.passRetained(ctx)
-        self.contextRetained = retained
-        let refCon = retained.toOpaque()
-
-        // EQ input callback: pulls audio from AUHAL input (BlackHole)
-        var eqInputCB = AURenderCallbackStruct(
-            inputProc: { (inRefCon, ioActionFlags, inTimeStamp, _, inFrames, ioData) -> OSStatus in
-                let ctx = Unmanaged<RenderContext>.fromOpaque(inRefCon).takeUnretainedValue()
-                return AudioUnitRender(ctx.ioUnit, ioActionFlags, inTimeStamp, 1, inFrames, ioData!)
-            },
-            inputProcRefCon: refCon
-        )
-        AudioUnitSetProperty(eqU, kAudioUnitProperty_SetRenderCallback,
-                              kAudioUnitScope_Input, 0, &eqInputCB,
-                              UInt32(MemoryLayout<AURenderCallbackStruct>.size))
-
-        // Output callback: pulls from EQ, applies volume/balance
-        var outputCB = AURenderCallbackStruct(
-            inputProc: { (inRefCon, ioActionFlags, inTimeStamp, _, inFrames, ioData) -> OSStatus in
-                let ctx = Unmanaged<RenderContext>.fromOpaque(inRefCon).takeUnretainedValue()
-
-                // Heartbeat for watchdog
-                heartbeat.withLock { $0 += 1 }
-
-                // Pull processed audio from EQ
-                let status = AudioUnitRender(ctx.eqUnit, ioActionFlags, inTimeStamp, 0, inFrames, ioData!)
-                guard status == noErr else {
-                    errorCount.withLock { $0 += 1 }
-                    return status
-                }
-                // Reset error count on success
-                errorCount.withLock { $0 = 0 }
-
-                let bufs = UnsafeMutableAudioBufferListPointer(ioData!)
-                let frames = Int(inFrames)
-                let volume = ctx.volume
-                let balance = ctx.balance
-                // Boost compensates for signal level loss through BlackHole routing
-                let boost: Float = 1.5
-                let leftGain = volume * min(1.0, 1.0 - balance) * boost
-                let rightGain = volume * min(1.0, 1.0 + balance) * boost
-
-                // Apply volume + balance
-                if bufs.count >= 1, let left = bufs[0].mData?.assumingMemoryBound(to: Float.self) {
-                    for i in 0..<frames { left[i] *= leftGain }
-                }
-                if bufs.count >= 2, let right = bufs[1].mData?.assumingMemoryBound(to: Float.self) {
-                    for i in 0..<frames { right[i] *= rightGain }
-                }
-
-                return noErr
-            },
-            inputProcRefCon: refCon
-        )
-        AudioUnitSetProperty(ioU, kAudioUnitProperty_SetRenderCallback,
-                              kAudioUnitScope_Input, 0, &outputCB,
-                              UInt32(MemoryLayout<AURenderCallbackStruct>.size))
-
-        // Initialize units
-        var s = AudioUnitInitialize(eqU)
-        NSLog("EQ init: %d", s)
-        s = AudioUnitInitialize(ioU)
-        NSLog("AUHAL init: %d", s)
-
-        // Configure EQ bands AFTER init (init resets parameters)
-        for i in 0..<10 {
-            let idx = AudioUnitParameterID(i)
-            AudioUnitSetParameter(eqU, 2000 + idx, kAudioUnitScope_Global, 0, 0, 0) // FilterType: parametric
-            AudioUnitSetParameter(eqU, 3000 + idx, kAudioUnitScope_Global, 0, eqFrequencies[i], 0)
-            AudioUnitSetParameter(eqU, 5000 + idx, kAudioUnitScope_Global, 0, 1.0, 0) // Bandwidth
-            AudioUnitSetParameter(eqU, 4000 + idx, kAudioUnitScope_Global, 0, store.bands[i].gain, 0)
-            AudioUnitSetParameter(eqU, 1000 + idx, kAudioUnitScope_Global, 0, store.isEnabled ? 0 : 1, 0)
-        }
-
-        // Start
-        s = AudioOutputUnitStart(ioU)
-        NSLog("AUHAL start: %d", s)
-
-        self.ioUnit = ioU
-        self.eqUnit = eqU
-
-        // Save recovery info BEFORE redirecting audio
-        if let uid = getDeviceUID(realID) {
-            AudioRecovery.saveRealOutputUID(uid)
-        }
-
-        // Route system audio to BlackHole
-        setDefaultOutputDevice(bhDeviceID)
-        NSLog("System output → BlackHole")
-
-        isRunning = true
-        installDeviceListener()
-        installDeviceListListener()
-        startWatchdog()
+        CoreAudioDevices.allowIdleSleepDuringIO()
+        installSystemListeners()
         refreshOutputDevices()
-        NSLog("Engine running")
+        _ = refreshAccess()
+        reconcile()
     }
 
-    func stop() {
-        stopWatchdog()
-        removeDeviceListener()
-        removeDeviceListListener()
-
-        if let ioU = ioUnit {
-            AudioOutputUnitStop(ioU)
-            AudioUnitUninitialize(ioU)
-            AudioComponentInstanceDispose(ioU)
-        }
-        if let eqU = eqUnit {
-            AudioUnitUninitialize(eqU)
-            AudioComponentInstanceDispose(eqU)
-        }
-        ioUnit = nil
-        eqUnit = nil
-
-        // Release context
-        contextRetained?.release()
-        contextRetained = nil
-        context = nil
-
-        destroyAggregateDevice()
-        restoreOriginalOutput()
-
-        // Clear recovery file — clean shutdown, no recovery needed
-        AudioRecovery.clear()
-
-        isRunning = false
-        NSLog("Engine stopped")
-    }
-
-    func toggleEnabled(_ enabled: Bool) {
+    /// Brings the engine in line with the switch, the permission and the
+    /// current default output. Safe to call as often as anything changes:
+    /// requests are coalesced on the engine queue, and the last one wins.
+    func reconcile(forceRebuild: Bool = false) {
         guard let store else { return }
-        if enabled {
-            if !isRunning {
-                start(store: store)
-            } else {
-                updateEnabled(true)
-                updateEQ(bands: store.bands)
-            }
-        } else {
-            if isRunning {
-                updateEnabled(false)
-            }
-        }
+        let permitted = access == .authorized || access == .unknown
+        if store.isEnabled && access == .notDetermined { requestAccessOnce() }
+        controller.submit(EngineRequest(run: store.isEnabled && permitted, forceRebuild: forceRebuild),
+                          settings: store.eqSettings)
+        updateState()
+        updateAccessTimer()
     }
 
-    func updateEQ(bands: [EQBand]) {
-        guard let eqU = eqUnit else { return }
-        for (i, band) in bands.enumerated() where i < 10 {
-            AudioUnitSetParameter(eqU, 4000 + AudioUnitParameterID(i),
-                                   kAudioUnitScope_Global, 0, band.gain, 0)
-        }
+    /// EQ, volume or balance changed. Applied to the running pipeline in place.
+    func settingsChanged(_ settings: EQSettings) {
+        controller.update(settings)
     }
 
-    func updateVolume(_ volume: Float) {
-        context?.volume = volume
+    /// Makes `uid` the system's default output. The engine follows the default,
+    /// so this is the same choice the Sound menu makes.
+    func selectOutputDevice(uid: String) {
+        guard let device = availableOutputDevices.first(where: { $0.uid == uid }) else { return }
+        engineLog.notice("output selected: \(device.name, privacy: .public)")
+        controller.setDefaultOutput(device.id)
     }
 
-    func updateBalance(_ balance: Float) {
-        context?.balance = balance
-    }
-
-    func updateEnabled(_ enabled: Bool) {
-        guard let eqU = eqUnit else { return }
-        for i in 0..<10 {
-            AudioUnitSetParameter(eqU, 1000 + AudioUnitParameterID(i),
-                                   kAudioUnitScope_Global, 0, enabled ? 0 : 1, 0)
-        }
-    }
-
-    // MARK: - Device Change Monitoring
-
-    private func installDeviceListener() {
-        guard !defaultOutputListenerInstalled else { return }
-        var addr = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
-            DispatchQueue.main.async { self?.handleDeviceChange() }
-        }
-        defaultOutputListenerBlock = block
-        AudioObjectAddPropertyListenerBlock(
-            AudioObjectID(kAudioObjectSystemObject), &addr, DispatchQueue.main, block
-        )
-        defaultOutputListenerInstalled = true
-    }
-
-    private func removeDeviceListener() {
-        guard defaultOutputListenerInstalled, let block = defaultOutputListenerBlock else { return }
-        var addr = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        AudioObjectRemovePropertyListenerBlock(
-            AudioObjectID(kAudioObjectSystemObject), &addr, DispatchQueue.main, block
-        )
-        defaultOutputListenerBlock = nil
-        defaultOutputListenerInstalled = false
-    }
-
-    private func installDeviceListListener() {
-        guard !deviceListListenerInstalled else { return }
-        var addr = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDevices,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
-            // Debounce: devices can fire multiple notifications on connect/disconnect
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                self?.handleDeviceListChange()
-            }
-        }
-        deviceListListenerBlock = block
-        AudioObjectAddPropertyListenerBlock(
-            AudioObjectID(kAudioObjectSystemObject), &addr, DispatchQueue.main, block
-        )
-        deviceListListenerInstalled = true
-    }
-
-    private func removeDeviceListListener() {
-        guard deviceListListenerInstalled, let block = deviceListListenerBlock else { return }
-        var addr = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDevices,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        AudioObjectRemovePropertyListenerBlock(
-            AudioObjectID(kAudioObjectSystemObject), &addr, DispatchQueue.main, block
-        )
-        deviceListListenerBlock = nil
-        deviceListListenerInstalled = false
-    }
-
-    // MARK: - Preventive Restart
-    // The aggregate device silently loses its BlackHole input connection
-    // after 5-30 minutes. No error is reported — AudioUnitRender succeeds
-    // but returns zeros. Since this can't be detected, we restart the
-    // engine periodically to prevent it.
-
-    private static let restartInterval: TimeInterval = 240 // 4 minutes
-
-    private func startWatchdog() {
-        stopWatchdog()
-        let queue = DispatchQueue(label: "imperator.watchdog")
-        let source = DispatchSource.makeTimerSource(queue: queue)
-        source.schedule(deadline: .now() + Self.restartInterval, repeating: Self.restartInterval)
-        source.setEventHandler {
-            NSLog("Watchdog: preventive restart (every %.0fs)", Self.restartInterval)
-            DispatchQueue.main.async {
-                NotificationCenter.default.post(name: .imperatorEngineStalled, object: nil)
-            }
-        }
-        watchdogSource = source
-        source.resume()
-        NSLog("Watchdog started (preventive restart every %.0fs)", Self.restartInterval)
-    }
-
-    private func stopWatchdog() {
-        watchdogSource?.cancel()
-        watchdogSource = nil
-    }
-
-    private func handleDeviceListChange() {
-        guard isRunning, let store else { return }
-
+    /// The panel just opened: a switch flipped in System Settings should show
+    /// without waiting for the timer.
+    func panelOpened() {
+        if refreshAccess() { reconcile() }
         refreshOutputDevices()
-
-        guard let preferred = findPreferredOutputDevice() else { return }
-        let preferredUID = getDeviceUID(preferred)
-
-        // No change needed if same device
-        if preferredUID == activeOutputUID { return }
-
-        let name = getDeviceName(preferred) ?? "Unknown"
-        NSLog("Auto-switching output: %@ → %@", (activeOutputUID ?? "?") as NSString, name as NSString)
-
-        stop()
-        start(store: store)
     }
 
-    private func handleDeviceChange() {
-        guard isRunning else { return }
-        guard let bhID = blackHoleDeviceID else { return }
-        guard let newDefault = getDefaultOutputDevice() else { return }
-        let newUID = getDeviceUID(newDefault)
+    func openAccessSettings() {
+        NSWorkspace.shared.open(SystemAudioAccess.settingsURL)
+    }
 
-        if newUID != blackHoleUID {
-            // Something changed default away from BlackHole (monitor plugged in, etc.)
-            // Just reclaim it — our aggregate and engine are still valid
-            NSLog("Default changed to %@, reclaiming BlackHole", (newUID ?? "?") as NSString)
-            setDefaultOutputDevice(bhID)
+    /// Called at quit. Bounded, because coreaudiod can be slow to answer and
+    /// the process exiting removes the private tap and aggregate anyway.
+    func shutdown() {
+        controller.shutdown(timeout: 0.5)
+    }
+
+    // MARK: - State
+
+    private func handle(_ outcome: EngineOutcome) {
+        lastOutcome = outcome
+        updateState()
+    }
+
+    /// Derived, not stored step by step: the switch and the permission decide
+    /// first, and only then does the last result from the engine queue count.
+    /// A late result from a request that has since been overtaken can then
+    /// never show a state the switch no longer asks for.
+    private func updateState() {
+        guard let store, store.isEnabled else {
+            state = .off
+            return
+        }
+        switch access {
+        case .notDetermined:
+            state = .waitingForAccess
+            return
+        case .denied:
+            state = .accessDenied
+            return
+        case .authorized, .unknown:
+            break
+        }
+        switch lastOutcome {
+        case .running: state = .running
+        case .failed(let name): state = .failed(deviceName: name)
+        case .stopped: state = .starting
         }
     }
 
-    // MARK: - Aggregate Device
+    // MARK: - Permission
 
-    private func createAggregateDevice(outputUID: String, inputUID: String) -> AudioDeviceID {
-        let desc: [String: Any] = [
-            kAudioAggregateDeviceUIDKey as String: aggregateUID,
-            kAudioAggregateDeviceNameKey as String: "Imperator EQ",
-            kAudioAggregateDeviceSubDeviceListKey as String: [
-                // Output device is master clock — no drift compensation needed
-                [kAudioSubDeviceUIDKey as String: outputUID],
-                // BlackHole is virtual — enable drift compensation to sync with master clock.
-                // Without this, clocks drift apart after a few minutes causing crackling then silence.
-                [kAudioSubDeviceUIDKey as String: inputUID,
-                 kAudioSubDeviceDriftCompensationKey as String: 1],
-            ],
-            kAudioAggregateDeviceMasterSubDeviceKey as String: outputUID,
+    /// Returns whether the status changed.
+    private func refreshAccess() -> Bool {
+        let current = SystemAudioAccess.status()
+        guard current != access else { return false }
+        engineLog.notice("system audio access: \(String(describing: current), privacy: .public)")
+        access = current
+        // An answer re-arms the request, so access reset to undecided while the
+        // app runs (tccutil, or the app removed from the list) is asked again.
+        if current != .notDetermined { askedForAccess = false }
+        return true
+    }
+
+    /// One prompt per undecided spell. The system shows it once per app anyway,
+    /// and a second request while it is up would queue behind it.
+    private func requestAccessOnce() {
+        guard !askedForAccess else { return }
+        askedForAccess = true
+        engineLog.notice("asking for system audio access")
+        SystemAudioAccess.requestAccess { [weak self] granted in
+            Task { @MainActor in
+                guard let self else { return }
+                engineLog.notice("system audio access request answered: \(granted, privacy: .public)")
+                _ = self.refreshAccess()
+                self.reconcile()
+            }
+        }
+    }
+
+    /// Picks up a switch flipped in System Settings, and a revocation while
+    /// running, which would otherwise leave the apps muted behind a tap that
+    /// reads silence. Every 2 seconds while the switch is on, running or not:
+    /// the check is one small call to tccd, and a revocation should not leave
+    /// the Mac quiet for long. The timer does not exist while the switch is off.
+    private func updateAccessTimer() {
+        let wanted = store?.isEnabled == true && access != .unknown
+        if wanted, accessTimer == nil {
+            let timer = Timer(timeInterval: 2, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self, self.refreshAccess() else { return }
+                    self.reconcile()
+                }
+            }
+            timer.tolerance = 0.5
+            RunLoop.main.add(timer, forMode: .common)
+            accessTimer = timer
+        } else if !wanted, let timer = accessTimer {
+            timer.invalidate()
+            accessTimer = nil
+        }
+    }
+
+    // MARK: - System events
+
+    private func installSystemListeners() {
+        listen(kAudioHardwarePropertyDefaultOutputDevice) { engine in
+            engine.refreshActiveOutput()
+            engine.reconcile()
+        }
+        listen(kAudioHardwarePropertyDevices) { engine in
+            engine.scheduleDeviceRefresh()
+        }
+        // coreaudiod restarted: every object the pipeline held is gone.
+        listen(kAudioHardwarePropertyServiceRestarted) { engine in
+            engineLog.notice("coreaudiod restarted")
+            engine.reconcile(forceRebuild: true)
+        }
+        _ = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            // Devices come back over the first second or so after wake. One that
+            // is not back yet fails the build, and the engine queue retries it.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                MainActor.assumeIsolated {
+                    engineLog.notice("woke from sleep")
+                    self?.reconcile(forceRebuild: true)
+                }
+            }
+        }
+    }
+
+    private func listen(_ selector: AudioObjectPropertySelector, _ handler: @escaping @MainActor (AudioEngine) -> Void) {
+        let listener = PropertyListener(object: CoreAudioDevices.system, addresses: [CoreAudioDevices.address(selector)],
+                                        queue: .main) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                handler(self)
+            }
+        }
+        systemListeners.append(listener)
+    }
+
+    /// A device plugging in fires several notifications in a row.
+    private func scheduleDeviceRefresh() {
+        guard !deviceRefreshScheduled else { return }
+        deviceRefreshScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            MainActor.assumeIsolated {
+                self?.deviceRefreshScheduled = false
+                self?.refreshOutputDevices()
+            }
+        }
+    }
+
+    private func refreshOutputDevices() {
+        var devices: [OutputDevice] = []
+        for id in CoreAudioDevices.allDevices {
+            guard let uid = CoreAudioDevices.uid(id), !uid.hasPrefix(Self.aggregateUIDPrefix),
+                  !CoreAudioDevices.isHidden(id), CoreAudioDevices.canBeDefaultOutput(id),
+                  CoreAudioDevices.channelCount(id, scope: kAudioObjectPropertyScopeOutput) > 0 else { continue }
+            devices.append(OutputDevice(id: id, uid: uid, name: CoreAudioDevices.name(id) ?? uid))
+        }
+        if devices != availableOutputDevices {
+            availableOutputDevices = devices
+            // A device that just arrived, or just finished arriving, may be the
+            // one a failed start could not use yet. The list leaves out this
+            // app's own aggregates, so a failing build cannot trigger itself.
+            if case .failed = lastOutcome { reconcile() }
+        }
+        refreshActiveOutput()
+    }
+
+    private func refreshActiveOutput() {
+        let uid = CoreAudioDevices.defaultOutputDevice.flatMap(CoreAudioDevices.uid)
+        if uid != activeOutputUID { activeOutputUID = uid }
+    }
+}
+
+// MARK: - Engine queue
+
+struct EngineRequest: Sendable {
+    /// Whether a pipeline should be running.
+    var run: Bool
+    /// Tear down and build again even when nothing seems to have changed:
+    /// after wake or a coreaudiod restart.
+    var forceRebuild: Bool
+}
+
+enum EngineOutcome: Sendable {
+    case stopped
+    case running
+    /// The reason is in the log, written where the failure happened.
+    case failed(deviceName: String)
+}
+
+/// Owns the running pipeline. Everything that touches it runs on `queue`,
+/// never on the main thread: creating a tap, an aggregate device or an IOProc
+/// waits on coreaudiod, and a wait there on the main thread freezes the menu
+/// bar item before it is ever drawn.
+final class EngineController: @unchecked Sendable {
+    private let queue = DispatchQueue(label: "com.goranimperator.ImperatorEQ.engine", qos: .userInitiated)
+
+    /// Set once, from the main thread, before the first request.
+    var onOutcome: (@Sendable (EngineOutcome) -> Void)?
+
+    /// Requests and settings cross from the main thread through this box. A
+    /// burst of switch flips while a build is under way collapses into one
+    /// pending request, and whatever runs next reads the newest settings.
+    private struct Mailbox {
+        var pending: EngineRequest?
+        var draining = false
+        var settings = EQSettings.flat
+    }
+    private let mailbox = OSAllocatedUnfairLock(initialState: Mailbox())
+
+    // Engine-queue state.
+    private var pipeline: TapPipeline?
+    /// What the last request asked for; a retry runs only while this holds.
+    private var wantsRun = false
+    private var watchdog: DispatchSourceTimer?
+    private var deviceListener: PropertyListener?
+    private var lastCallbacks: UInt64 = 0
+    private var stalledTicks = 0
+    private var healthTicks = 0
+    private var retry: DispatchWorkItem?
+    private var failedAttempts = 0
+
+    /// Seconds before each retry after a failed start or a stall. A device that
+    /// has just appeared, or is coming back from sleep, often refuses the first
+    /// build and takes one a moment later. After the last one the engine waits
+    /// for the switch, the output or the device list to change.
+    private static let retryDelays: [TimeInterval] = [0.5, 1, 2, 4, 8]
+
+    func submit(_ request: EngineRequest, settings: EQSettings) {
+        let schedule = mailbox.withLock { box -> Bool in
+            // A rebuild asked for after wake must survive being overtaken by a
+            // plain request before the queue reads it.
+            var merged = request
+            merged.forceRebuild = request.forceRebuild || (box.pending?.forceRebuild ?? false)
+            box.pending = merged
+            box.settings = settings
+            guard !box.draining else { return false }
+            box.draining = true
+            return true
+        }
+        if schedule { queue.async { self.drain() } }
+    }
+
+    func update(_ settings: EQSettings) {
+        mailbox.withLock { $0.settings = settings }
+        queue.async {
+            let latest = self.mailbox.withLock { $0.settings }
+            self.pipeline?.apply(latest)
+        }
+    }
+
+    func setDefaultOutput(_ device: AudioDeviceID) {
+        queue.async {
+            if !CoreAudioDevices.setDefaultOutputDevice(device) {
+                engineLog.error("could not set the default output to device \(device, privacy: .public)")
+            }
+        }
+    }
+
+    func shutdown(timeout: TimeInterval) {
+        let done = DispatchSemaphore(value: 0)
+        queue.async {
+            self.wantsRun = false
+            self.cancelRetry()
+            self.tearDown()
+            done.signal()
+        }
+        if done.wait(timeout: .now() + timeout) == .timedOut {
+            engineLog.error("engine did not stop within \(timeout, privacy: .public)s; exiting anyway")
+        }
+    }
+
+    private func drain() {
+        while true {
+            let request = mailbox.withLock { box -> EngineRequest? in
+                let request = box.pending
+                box.pending = nil
+                if request == nil { box.draining = false }
+                return request
+            }
+            guard let request else { return }
+            reconcile(request)
+        }
+    }
+
+    private func reconcile(_ request: EngineRequest) {
+        // A request means the switch, the output or the device list changed:
+        // news a retry in flight knows nothing about, so it starts a fresh round.
+        wantsRun = request.run
+        cancelRetry()
+        failedAttempts = 0
+
+        guard request.run else {
+            tearDown()
+            onOutcome?(.stopped)
+            return
+        }
+        if let pipeline, !request.forceRebuild, pipeline.outputDevice == CoreAudioDevices.defaultOutputDevice {
+            pipeline.apply(mailbox.withLock { $0.settings })
+            onOutcome?(.running)
+            return
+        }
+        build()
+    }
+
+    /// Replaces whatever runs with a pipeline on the current default output,
+    /// with the newest settings.
+    private func build() {
+        tearDown()
+        do {
+            let started = try TapPipeline.start(settings: mailbox.withLock { $0.settings },
+                                                bufferFrames: AudioEngine.bufferFrames)
+            pipeline = started
+            watch(started)
+            engineLog.notice("""
+                engine running on \(started.outputName, privacy: .public): \
+                \(Int(started.sampleRate), privacy: .public) Hz, \(started.channels, privacy: .public) ch, \
+                buffer \(started.bufferFrames, privacy: .public)
+                """)
+            onOutcome?(.running)
+        } catch {
+            let name = CoreAudioDevices.defaultOutputDevice.flatMap(CoreAudioDevices.name) ?? "this output"
+            engineLog.error("engine failed on \(name, privacy: .public): \(String(describing: error), privacy: .public)")
+            failed(on: name)
+        }
+    }
+
+    /// Reports the failure, which leaves the apps playing as normal, and
+    /// schedules the next retry while the switch still asks for the EQ.
+    private func failed(on deviceName: String) {
+        onOutcome?(.failed(deviceName: deviceName))
+        guard failedAttempts < Self.retryDelays.count else {
+            engineLog.error("no more retries until the switch, the output or the device list changes")
+            return
+        }
+        let delay = Self.retryDelays[failedAttempts]
+        failedAttempts += 1
+        let item = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.retry = nil
+            guard self.wantsRun, self.pipeline == nil else { return }
+            engineLog.notice("retrying the engine, attempt \(self.failedAttempts, privacy: .public)")
+            self.build()
+        }
+        retry = item
+        queue.asyncAfter(deadline: .now() + delay, execute: item)
+    }
+
+    private func cancelRetry() {
+        retry?.cancel()
+        retry = nil
+    }
+
+    private func tearDown() {
+        guard let pipeline else { return }
+        watchdog?.cancel()
+        watchdog = nil
+        deviceListener?.cancel()
+        deviceListener = nil
+        pipeline.stop()
+        self.pipeline = nil
+        engineLog.notice("engine stopped")
+    }
+
+    // MARK: Watching the running pipeline
+
+    private func watch(_ pipeline: TapPipeline) {
+        lastCallbacks = 0
+        stalledTicks = 0
+        healthTicks = 0
+
+        // The IOProc runs whenever the device runs, silence included, so a
+        // callback count that stops moving means the IO stopped.
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + 2, repeating: 2)
+        timer.setEventHandler { [weak self] in self?.checkHealth() }
+        watchdog = timer
+        timer.resume()
+
+        // A new sample rate or channel layout invalidates the tap's format,
+        // and a device that goes away takes the pipeline with it. The HAL also
+        // sends these when nothing that matters moved, including around this
+        // pipeline's own aggregate, so the values are compared first: a rebuild
+        // on every notification could rebuild itself in a loop.
+        let addresses = [
+            CoreAudioDevices.address(kAudioDevicePropertyNominalSampleRate),
+            CoreAudioDevices.address(kAudioDevicePropertyStreamConfiguration, scope: kAudioObjectPropertyScopeOutput),
+            CoreAudioDevices.address(kAudioDevicePropertyDeviceIsAlive),
         ]
-        var deviceID: AudioDeviceID = 0
-        let status = AudioHardwareCreateAggregateDevice(desc as CFDictionary, &deviceID)
-        if status != noErr {
-            NSLog("CreateAggregateDevice: %d", status)
-            return 0
-        }
-        return deviceID
-    }
-
-    private func destroyAggregateDevice() {
-        guard aggregateDeviceID != 0 else { return }
-        AudioHardwareDestroyAggregateDevice(aggregateDeviceID)
-        aggregateDeviceID = 0
-    }
-
-    private func restoreOriginalOutput() {
-        if let realID = realOutputDeviceID {
-            setDefaultOutputDevice(realID)
-            NSLog("Restored output to real device")
+        deviceListener = PropertyListener(object: pipeline.outputDevice, addresses: addresses,
+                                          queue: queue) { [weak self, weak pipeline] in
+            // Queued before this pipeline was replaced: about one that is gone.
+            guard let self, let pipeline, self.pipeline === pipeline else { return }
+            let device = pipeline.outputDevice
+            let alive = (CoreAudioDevices.value(device, kAudioDevicePropertyDeviceIsAlive, as: UInt32.self) ?? 0) != 0
+            let rate = CoreAudioDevices.value(device, kAudioDevicePropertyNominalSampleRate, as: Float64.self) ?? 0
+            let channels = CoreAudioDevices.firstStreamChannels(device, scope: kAudioObjectPropertyScopeOutput) ?? 0
+            guard !alive || rate != pipeline.sampleRate || channels != pipeline.channels else { return }
+            engineLog.notice("""
+                output changed underneath the engine: alive \(alive, privacy: .public), \
+                \(Int(rate), privacy: .public) Hz, \(channels, privacy: .public) ch
+                """)
+            self.build()
         }
     }
 
-    // MARK: - CoreAudio Helpers
-
-    private func findPreferredOutputDevice() -> AudioDeviceID? {
-        let knownUIDs: Set<String> = [blackHoleUID, aggregateUID]
-        var builtIn: AudioDeviceID?
-        var bluetooth: AudioDeviceID?
-        var fallback: AudioDeviceID?
-
-        for deviceID in getAllDeviceIDs() {
-            guard let uid = getDeviceUID(deviceID), !knownUIDs.contains(uid) else { continue }
-            guard getOutputChannelCount(deviceID) > 0 else { continue }
-
-            let transport = getDeviceTransportType(deviceID)
-            switch transport {
-            case kAudioDeviceTransportTypeBluetooth, kAudioDeviceTransportTypeBluetoothLE:
-                if bluetooth == nil { bluetooth = deviceID }
-            case kAudioDeviceTransportTypeBuiltIn:
-                if builtIn == nil { builtIn = deviceID }
-            case kAudioDeviceTransportTypeHDMI, kAudioDeviceTransportTypeDisplayPort, kAudioDeviceTransportTypeAirPlay:
-                break // Ignore monitors and AirPlay
-            default:
-                if fallback == nil { fallback = deviceID } // USB DAC, etc.
-            }
+    private func checkHealth() {
+        guard let pipeline else { return }
+        let stats = pipeline.stats
+        if stats.callbacks != lastCallbacks {
+            stalledTicks = 0
+            // IO is moving, so the next failure starts a fresh round of retries.
+            failedAttempts = 0
+        } else {
+            stalledTicks += 1
+        }
+        lastCallbacks = stats.callbacks
+        if stalledTicks >= 2 {
+            // Also a pipeline that never delivered a first cycle. It goes through
+            // the same capped retries as a failed start instead of being rebuilt
+            // every 4 s for good.
+            engineLog.error("IO stalled for 4 s, rebuilding")
+            let name = pipeline.outputName
+            tearDown()
+            failed(on: name)
+            return
         }
 
-        let chosen = bluetooth ?? builtIn ?? fallback
-        if let chosen {
-            let name = getDeviceName(chosen) ?? "Unknown"
-            let transport = getDeviceTransportType(chosen)
-            NSLog("Preferred output: %@ (transport=0x%08X)", name as NSString, transport)
-        }
-        return chosen
-    }
-
-    private func getDeviceTransportType(_ deviceID: AudioDeviceID) -> UInt32 {
-        var transportType: UInt32 = 0
-        var size = UInt32(MemoryLayout<UInt32>.size)
-        var addr = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyTransportType,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        AudioObjectGetPropertyData(deviceID, &addr, 0, nil, &size, &transportType)
-        return transportType
-    }
-
-    private func getAllDeviceIDs() -> [AudioDeviceID] {
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDevices,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        var propSize: UInt32 = 0
-        guard AudioObjectGetPropertyDataSize(
-            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &propSize
-        ) == noErr else { return [] }
-        let count = Int(propSize) / MemoryLayout<AudioDeviceID>.size
-        var ids = [AudioDeviceID](repeating: 0, count: count)
-        guard AudioObjectGetPropertyData(
-            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &propSize, &ids
-        ) == noErr else { return [] }
-        return ids
-    }
-
-    private func getDeviceName(_ deviceID: AudioDeviceID) -> String? {
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioObjectPropertyName,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        var propSize = UInt32(MemoryLayout<Unmanaged<CFString>>.size)
-        var name: Unmanaged<CFString>?
-        guard AudioObjectGetPropertyData(deviceID, &address, 0, nil, &propSize, &name) == noErr else { return nil }
-        return name?.takeUnretainedValue() as String?
-    }
-
-    private func getOutputChannelCount(_ deviceID: AudioDeviceID) -> Int {
-        channelCount(deviceID, scope: kAudioDevicePropertyScopeOutput)
-    }
-
-
-    private func channelCount(_ deviceID: AudioDeviceID, scope: AudioObjectPropertyScope) -> Int {
-        var addr = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyStreamConfiguration,
-            mScope: scope,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        var bufSize: UInt32 = 0
-        guard AudioObjectGetPropertyDataSize(deviceID, &addr, 0, nil, &bufSize) == noErr,
-              bufSize > 0 else { return 0 }
-        let bufferList = UnsafeMutablePointer<AudioBufferList>.allocate(capacity: Int(bufSize))
-        defer { bufferList.deallocate() }
-        guard AudioObjectGetPropertyData(deviceID, &addr, 0, nil, &bufSize, bufferList) == noErr else { return 0 }
-        return (0..<Int(bufferList.pointee.mNumberBuffers)).reduce(0) { total, i in
-            total + Int(UnsafeMutableAudioBufferListPointer(bufferList)[i].mNumberChannels)
+        healthTicks += 1
+        if healthTicks % 30 == 0 {   // once a minute
+            engineLog.info("""
+                health: \(stats.callbacks, privacy: .public) cycles, \
+                in \(Self.decibels(stats.inputLevel), privacy: .public) dB, \
+                out \(Self.decibels(stats.outputLevel), privacy: .public) dB, \
+                pass-throughs \(stats.passThroughs, privacy: .public), missing \(stats.missingBuffers, privacy: .public)
+                """)
         }
     }
 
-    private func findDeviceByUID(_ targetUID: String) -> AudioDeviceID? {
-        for deviceID in getAllDeviceIDs() {
-            if getDeviceUID(deviceID) == targetUID { return deviceID }
-        }
-        return nil
-    }
-
-    private func getDeviceUID(_ deviceID: AudioDeviceID) -> String? {
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyDeviceUID,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        var propSize = UInt32(MemoryLayout<Unmanaged<CFString>>.size)
-        var uid: Unmanaged<CFString>?
-        guard AudioObjectGetPropertyData(deviceID, &address, 0, nil, &propSize, &uid) == noErr else { return nil }
-        return uid?.takeUnretainedValue() as String?
-    }
-
-    private func getDefaultOutputDevice() -> AudioDeviceID? {
-        var deviceID = AudioDeviceID(0)
-        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        return AudioObjectGetPropertyData(
-            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &deviceID
-        ) == noErr ? deviceID : nil
-    }
-
-    private func setDefaultOutputDevice(_ deviceID: AudioDeviceID) {
-        var id = deviceID
-        let size = UInt32(MemoryLayout<AudioDeviceID>.size)
-        var addr = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        AudioObjectSetPropertyData(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, size, &id)
-        var sysAddr = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultSystemOutputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        AudioObjectSetPropertyData(AudioObjectID(kAudioObjectSystemObject), &sysAddr, 0, nil, size, &id)
-    }
-
-    private func getDeviceSampleRate(_ deviceID: AudioDeviceID) -> Float64 {
-        var rate: Float64 = 0
-        var size = UInt32(MemoryLayout<Float64>.size)
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyNominalSampleRate,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &rate)
-        return rate
-    }
-
-    private func setDeviceSampleRate(_ deviceID: AudioDeviceID, sampleRate: Float64) {
-        var rate = sampleRate
-        let size = UInt32(MemoryLayout<Float64>.size)
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyNominalSampleRate,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        AudioObjectSetPropertyData(deviceID, &address, 0, nil, size, &rate)
-    }
-
-    private func ensureDeviceUnmuted(_ deviceID: AudioDeviceID) {
-        // Unmute if muted
-        var muteAddr = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyMute,
-            mScope: kAudioDevicePropertyScopeOutput,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        if AudioObjectHasProperty(deviceID, &muteAddr) {
-            var muted: UInt32 = 0
-            var muteSize = UInt32(MemoryLayout<UInt32>.size)
-            AudioObjectGetPropertyData(deviceID, &muteAddr, 0, nil, &muteSize, &muted)
-            if muted != 0 {
-                var unmuted: UInt32 = 0
-                AudioObjectSetPropertyData(deviceID, &muteAddr, 0, nil, muteSize, &unmuted)
-                NSLog("Unmuted device %d", deviceID)
-            }
-        }
-
-        // Only recover volume if stuck at zero (from previous crash/mute).
-        // Don't touch it otherwise — let the user's volume keys work normally.
-        var volAddr = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyVolumeScalar,
-            mScope: kAudioDevicePropertyScopeOutput,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        if AudioObjectHasProperty(deviceID, &volAddr) {
-            var vol: Float32 = 0
-            var volSize = UInt32(MemoryLayout<Float32>.size)
-            AudioObjectGetPropertyData(deviceID, &volAddr, 0, nil, &volSize, &vol)
-            if vol < 0.01 {
-                var defaultVol: Float32 = 0.5
-                AudioObjectSetPropertyData(deviceID, &volAddr, 0, nil, volSize, &defaultVol)
-                NSLog("Recovered device %d volume from 0 to 0.5", deviceID)
-            }
-        }
+    private static func decibels(_ level: Float) -> Int {
+        level > 0 ? Int((20 * log10(level)).rounded()) : -200
     }
 }

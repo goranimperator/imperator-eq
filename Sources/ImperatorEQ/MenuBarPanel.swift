@@ -69,8 +69,11 @@ final class MenuBarPanel: NSPanel {
         // Brandbook 20.3, minus the always-on-top behaviour: this panel is
         // transient, so it closes on the first click elsewhere rather than
         // living above other apps.
-        level = .popUpMenu
+        // isFloatingPanel sets the level itself, so it goes first. After
+        // .popUpMenu it would drop the panel back to the floating level, under
+        // the Dock and the menu bar.
         isFloatingPanel = true
+        level = .popUpMenu
         hidesOnDeactivate = true
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         backgroundColor = .clear
@@ -108,7 +111,7 @@ final class MenuBarPanel: NSPanel {
 
     var isShown: Bool { isVisible }
 
-    /// Show under the menu bar button, with the arrow pointing at it.
+    /// Show under the menu bar button, centred on it.
     func show(from button: NSStatusBarButton) {
         guard let buttonWindow = button.window else { return }
         anchor = button
@@ -134,9 +137,12 @@ final class MenuBarPanel: NSPanel {
         startMonitoring()
     }
 
-    func close(_ sender: Any? = nil) {
+    /// An override, so every `close()` in the app lands here and the monitors
+    /// go with the panel. A `close(_:)` with a default argument would be a
+    /// second method beside NSWindow's, and a plain `close()` call skips it.
+    override func close() {
         stopMonitoring()
-        orderOut(nil)
+        super.close()
         onClose?()
     }
 
@@ -145,7 +151,9 @@ final class MenuBarPanel: NSPanel {
         clickMonitor = NSEvent.addGlobalMonitorForEvents(
             matching: [.leftMouseDown, .rightMouseDown]
         ) { [weak self] _ in
-            guard let self else { return }
+            // Hidden by AppKit when the app deactivated, or busy with a sheet
+            // that has to be answered first.
+            guard let self, self.isVisible, self.attachedSheet == nil else { return }
             guard self.shouldCloseOnOutsideClick() else { return }
             let pointer = NSEvent.mouseLocation
             // The status item's own click is the toggle. Closing here too would
@@ -161,8 +169,11 @@ final class MenuBarPanel: NSPanel {
             self.close()
         }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard event.keyCode == 53 else { return event }   // Escape
-            self?.close()
+            // Escape closes the panel, but a sheet on it, or another of the
+            // app's windows, gets its own Escape: the sheet cancels.
+            guard event.keyCode == 53, let self, self.isVisible, self.attachedSheet == nil else { return event }
+            if let window = event.window, window !== self { return event }
+            self.close()
             return nil
         }
     }

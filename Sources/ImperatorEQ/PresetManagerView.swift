@@ -4,26 +4,12 @@ struct PresetManagerView: View {
     @EnvironmentObject var store: EQStore
 
     @State private var showSaveSheet = false
-    @State private var newPresetName = ""
     @State private var editingPreset: EQPreset?
     @State private var draggingPresetId: UUID?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Button(action: { store.presetsExpanded.toggle() }) {
-                HStack {
-                    Text("PRESETS")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .rotationEffect(.degrees(store.presetsExpanded ? 90 : 0))
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
+            CollapsibleHeader(title: "PRESETS", isExpanded: $store.presetsExpanded)
 
             if store.presetsExpanded {
                 VStack(alignment: .leading, spacing: 8) {
@@ -39,35 +25,26 @@ struct PresetManagerView: View {
                         }
                     }
 
-                    if store.presets.isEmpty {
-                        Text("No saved presets")
-                            .font(.caption)
-                            .foregroundStyle(.quaternary)
-                            .frame(maxWidth: .infinity, alignment: .center)
-                            .padding(.vertical, 8)
-                    } else {
-                        VStack(spacing: 4) {
-                            ForEach(store.presets) { preset in
-                                PresetRowView(
-                                    preset: preset,
-                                    isActive: store.activePresetId == preset.id,
-                                    isDefault: preset.isDefault,
-                                    isDragTarget: draggingPresetId != nil && draggingPresetId != preset.id && !preset.isDefault,
-                                    onApply: { store.applyPreset(preset) },
-                                    onUpdate: { store.updatePreset(preset) },
-                                    onDelete: { store.deletePreset(preset) },
-                                    onRename: { editingPreset = preset }
-                                )
-                                .onDrag {
-                                    draggingPresetId = preset.id
-                                    return NSItemProvider(object: preset.id.uuidString as NSString)
-                                }
-                                .onDrop(of: [.text], delegate: PresetDropDelegate(
-                                    targetId: preset.id,
-                                    store: store,
-                                    draggingId: $draggingPresetId
-                                ))
+                    // Never empty: the built-in presets cannot be deleted.
+                    VStack(spacing: 4) {
+                        ForEach(store.presets) { preset in
+                            PresetRowView(
+                                preset: preset,
+                                isActive: store.activePresetId == preset.id,
+                                onApply: { store.applyPreset(preset) },
+                                onUpdate: { store.updatePreset(preset) },
+                                onDelete: { store.deletePreset(preset) },
+                                onRename: { editingPreset = preset }
+                            )
+                            .onDrag {
+                                draggingPresetId = preset.id
+                                return NSItemProvider(object: preset.id.uuidString as NSString)
                             }
+                            .onDrop(of: [.text], delegate: PresetDropDelegate(
+                                targetId: preset.id,
+                                store: store,
+                                draggingId: $draggingPresetId
+                            ))
                         }
                     }
                 }
@@ -76,74 +53,50 @@ struct PresetManagerView: View {
         }
         .clipped()
         .sheet(isPresented: $showSaveSheet) {
-            savePresetSheet
+            PresetNameSheet(title: "Save Preset", isTaken: store.presetNameExists) { name in
+                store.savePreset(name: name)
+                showSaveSheet = false
+            } onCancel: {
+                showSaveSheet = false
+            }
         }
         .sheet(item: $editingPreset) { preset in
-            renamePresetSheet(preset)
-        }
-    }
-
-    private var nameIsDuplicate: Bool {
-        !newPresetName.isEmpty && store.presetNameExists(newPresetName)
-    }
-
-    private var savePresetSheet: some View {
-        VStack(spacing: 12) {
-            Text("Save Preset")
-                .font(.headline)
-
-            VStack(alignment: .leading, spacing: 4) {
-                TextField("Preset name", text: $newPresetName)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 200)
-
-                if nameIsDuplicate {
-                    Text("A preset with this name already exists. Please choose a different name.")
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                        .frame(width: 200, alignment: .leading)
-                }
-            }
-
-            HStack {
-                Button("Cancel") {
-                    newPresetName = ""
-                    showSaveSheet = false
-                }
-                .keyboardShortcut(.cancelAction)
-
-                Button("Save") {
-                    if !newPresetName.isEmpty && !nameIsDuplicate {
-                        store.savePreset(name: newPresetName)
-                        newPresetName = ""
-                        showSaveSheet = false
-                    }
-                }
-                .keyboardShortcut(.defaultAction)
-                .disabled(newPresetName.isEmpty || nameIsDuplicate)
+            // Keeping its own name, in another case, is not a clash.
+            PresetNameSheet(title: "Rename Preset", name: preset.name,
+                            isTaken: { $0.lowercased() != preset.name.lowercased() && store.presetNameExists($0) }) { name in
+                store.renamePreset(preset, to: name)
+                editingPreset = nil
+            } onCancel: {
+                editingPreset = nil
             }
         }
-        .padding(20)
-    }
-
-    private func renamePresetSheet(_ preset: EQPreset) -> some View {
-        RenamePresetSheet(preset: preset, store: store, editingPreset: $editingPreset)
     }
 }
 
-struct RenamePresetSheet: View {
-    let preset: EQPreset
-    let store: EQStore
-    @Binding var editingPreset: EQPreset?
-    @State private var name: String = ""
+/// Asks for a preset name, for both saving and renaming.
+struct PresetNameSheet: View {
+    let title: String
+    let isTaken: (String) -> Bool
+    let onSave: (String) -> Void
+    let onCancel: () -> Void
+    @State private var name: String
+
+    init(title: String, name: String = "", isTaken: @escaping (String) -> Bool,
+         onSave: @escaping (String) -> Void, onCancel: @escaping () -> Void) {
+        self.title = title
+        self.isTaken = isTaken
+        self.onSave = onSave
+        self.onCancel = onCancel
+        _name = State(initialValue: name)
+    }
 
     private var nameIsDuplicate: Bool {
-        !name.isEmpty && name.lowercased() != preset.name.lowercased() && store.presetNameExists(name)
+        !name.isEmpty && isTaken(name)
     }
 
     var body: some View {
         VStack(spacing: 12) {
-            Text("Rename Preset")
+            Text(title)
                 .font(.headline)
 
             VStack(alignment: .leading, spacing: 4) {
@@ -160,24 +113,18 @@ struct RenamePresetSheet: View {
             }
 
             HStack {
-                Button("Cancel") {
-                    editingPreset = nil
-                }
-                .keyboardShortcut(.cancelAction)
+                Button("Cancel", action: onCancel)
+                    .keyboardShortcut(.cancelAction)
 
                 Button("Save") {
-                    guard !name.isEmpty, !nameIsDuplicate,
-                          let index = store.presets.firstIndex(where: { $0.id == preset.id }) else { return }
-                    store.presets[index].name = name
-                    store.persistPresets()
-                    editingPreset = nil
+                    guard !name.isEmpty, !nameIsDuplicate else { return }
+                    onSave(name)
                 }
                 .keyboardShortcut(.defaultAction)
                 .disabled(name.isEmpty || nameIsDuplicate)
             }
         }
         .padding(20)
-        .onAppear { name = preset.name }
     }
 }
 
@@ -193,20 +140,14 @@ struct PresetDropDelegate: DropDelegate {
         return true
     }
 
-    func dropEntered(info: DropInfo) {}
-
     func dropUpdated(info: DropInfo) -> DropProposal? {
         DropProposal(operation: .move)
     }
-
-    func dropExited(info: DropInfo) {}
 }
 
 struct PresetRowView: View {
     let preset: EQPreset
     let isActive: Bool
-    let isDefault: Bool
-    var isDragTarget: Bool = false
     let onApply: () -> Void
     let onUpdate: () -> Void
     let onDelete: () -> Void
@@ -218,9 +159,7 @@ struct PresetRowView: View {
     var body: some View {
         HStack {
             HStack(spacing: 6) {
-                Circle()
-                    .fill(isActive ? AppColors.brand : Color.gray.opacity(0.3))
-                    .frame(width: 8, height: 8)
+                ActiveDot(isActive: isActive)
                 Text(preset.name)
                     .font(.system(size: 10, weight: isActive ? .medium : .regular))
                     .lineLimit(1)
@@ -228,7 +167,7 @@ struct PresetRowView: View {
 
             Spacer()
 
-            if isHovered && !isDefault {
+            if isHovered && !preset.isDefault {
                 HStack(spacing: 8) {
                     HoverButton(action: onRename) {
                         Image(systemName: "pencil")
@@ -248,15 +187,7 @@ struct PresetRowView: View {
                 }
             }
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(isHovered ? AppColors.brand.opacity(0.1) : Color.clear)
-        )
-        .contentShape(Rectangle())
-        .onTapGesture(perform: onApply)
-        .onHover { isHovered = $0 }
+        .listRow(isHovered: $isHovered, onTap: onApply)
         .alert("Delete preset?", isPresented: $showConfirmDelete) {
             Button("Cancel", role: .cancel) {}
             Button("Delete", role: .destructive, action: onDelete)

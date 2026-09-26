@@ -6,3 +6,4 @@ ImperatorEQDriver.driver/
 Resources/AppIcon.iconset/
 dist/
 *.zip
+.claude/settings.local.json

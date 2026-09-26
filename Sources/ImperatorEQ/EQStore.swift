@@ -44,7 +44,8 @@ struct EQPreset: Identifiable, Codable, Equatable {
 
 @MainActor
 final class EQStore: ObservableObject {
-    static let defaultFrequencies = ["32", "64", "125", "250", "500", "1K", "2K", "4K", "8K", "16K"]
+    /// Band labels, made from the frequencies the engine runs: 32 ... 500, 1K ... 16K.
+    static let defaultFrequencies = EQSettings.frequencies.map { $0 >= 1000 ? "\(Int($0 / 1000))K" : "\(Int($0))" }
 
     @Published var bands: [EQBand]
     @Published var volume: Float = 1.0
@@ -60,22 +61,19 @@ final class EQStore: ObservableObject {
     private var stateSaveCancellable: AnyCancellable?
 
     static let defaultPresets: [EQPreset] = [
-        EQPreset(name: "Bass Boost", bands: defaultFrequencies.enumerated().map { i, freq in
-            EQBand(frequency: freq, gain: [8, 6, 4, 2, 0, 0, 0, 0, 0, 0][i])
-        }, isDefault: true),
-        EQPreset(name: "Treble Boost", bands: defaultFrequencies.enumerated().map { i, freq in
-            EQBand(frequency: freq, gain: [0, 0, 0, 0, 0, 2, 4, 5, 6, 7][i])
-        }, isDefault: true),
-        EQPreset(name: "Electronic", bands: defaultFrequencies.enumerated().map { i, freq in
-            EQBand(frequency: freq, gain: [8, 7, 4, 0, -2, -1, 2, 5, 6, 7][i])
-        }, isDefault: true),
-        EQPreset(name: "Rock", bands: defaultFrequencies.enumerated().map { i, freq in
-            EQBand(frequency: freq, gain: [5, 4, 2, -1, -2, -1, 2, 4, 5, 6][i])
-        }, isDefault: true),
-        EQPreset(name: "Metal", bands: defaultFrequencies.enumerated().map { i, freq in
-            EQBand(frequency: freq, gain: [7, 6, 3, -2, -4, -3, 2, 6, 8, 8][i])
-        }, isDefault: true),
+        builtIn("Bass Boost", gains: [8, 6, 4, 2, 0, 0, 0, 0, 0, 0]),
+        builtIn("Treble Boost", gains: [0, 0, 0, 0, 0, 2, 4, 5, 6, 7]),
+        builtIn("Electronic", gains: [8, 7, 4, 0, -2, -1, 2, 5, 6, 7]),
+        builtIn("Rock", gains: [5, 4, 2, -1, -2, -1, 2, 4, 5, 6]),
+        builtIn("Metal", gains: [7, 6, 3, -2, -4, -3, 2, 6, 8, 8]),
     ]
+
+    /// One gain per band; `zip` stops at the shorter list, so a band added
+    /// without a gain here is left out of the preset rather than crashing.
+    private static func builtIn(_ name: String, gains: [Float]) -> EQPreset {
+        EQPreset(name: name, bands: zip(defaultFrequencies, gains).map { EQBand(frequency: $0, gain: $1) },
+                 isDefault: true)
+    }
 
     init() {
         bands = Self.defaultFrequencies.map { EQBand(frequency: $0) }
@@ -92,18 +90,12 @@ final class EQStore: ObservableObject {
         setupAutoSave()
     }
 
+    /// Saves a second after the last change of any kind, so a slider drag
+    /// writes once, after it ends. Set up after loading, so loading saves nothing.
     private func setupAutoSave() {
-        // Auto-save state on any change (debounced 1s to avoid thrashing during slider drags)
-        stateSaveCancellable = Publishers.MergeMany(
-            $bands.map { _ in () }.eraseToAnyPublisher(),
-            $volume.map { _ in () }.eraseToAnyPublisher(),
-            $balance.map { _ in () }.eraseToAnyPublisher(),
-            $isEnabled.map { _ in () }.eraseToAnyPublisher(),
-            $activePresetId.map { _ in () }.eraseToAnyPublisher()
-        )
-        .dropFirst(5) // Skip initial values from init
-        .debounce(for: .seconds(1), scheduler: RunLoop.main)
-        .sink { [weak self] in self?.saveState() }
+        stateSaveCancellable = objectWillChange
+            .debounce(for: .seconds(1), scheduler: RunLoop.main)
+            .sink { [weak self] _ in self?.saveState() }
     }
 
     func resetBands() {
@@ -135,9 +127,16 @@ final class EQStore: ObservableObject {
               let fromIndex = presets.firstIndex(where: { $0.id == fromId }),
               let toIndex = presets.firstIndex(where: { $0.id == toId }),
               !presets[fromIndex].isDefault else { return }
+        // Inserted at the target's old index: after it when moving down, since
+        // the removal shifted it up one, and before it when moving up.
         let preset = presets.remove(at: fromIndex)
-        let insertIndex = fromIndex < toIndex ? toIndex : toIndex
-        presets.insert(preset, at: insertIndex)
+        presets.insert(preset, at: toIndex)
+        persistPresets()
+    }
+
+    func renamePreset(_ preset: EQPreset, to name: String) {
+        guard !preset.isDefault, let index = presets.firstIndex(where: { $0.id == preset.id }) else { return }
+        presets[index].name = name
         persistPresets()
     }
 
@@ -202,7 +201,7 @@ final class EQStore: ObservableObject {
             activePresetId: activePresetId
         )
         guard let data = try? JSONEncoder().encode(state) else { return }
-        try? data.write(to: stateURL)
+        try? data.write(to: stateURL, options: .atomic)
     }
 
     private func loadState() {
@@ -215,14 +214,23 @@ final class EQStore: ObservableObject {
         activePresetId = state.activePresetId
     }
 
-    func persistPresets() {
+    /// Atomic, so a write cut off by a full disk or a crash leaves the previous
+    /// file instead of half of the new one.
+    private func persistPresets() {
         guard let data = try? JSONEncoder().encode(presets) else { return }
-        try? data.write(to: presetsURL)
+        try? data.write(to: presetsURL, options: .atomic)
     }
 
     private func loadPresets() {
-        guard let data = try? Data(contentsOf: presetsURL),
-              let loaded = try? JSONDecoder().decode([EQPreset].self, from: data) else { return }
-        presets = loaded
+        guard let data = try? Data(contentsOf: presetsURL) else { return }
+        do {
+            presets = try JSONDecoder().decode([EQPreset].self, from: data)
+        } catch {
+            // The defaults are written over this path at every launch, so an
+            // unreadable file is moved aside first rather than lost for good.
+            let aside = presetsURL.deletingPathExtension().appendingPathExtension("unreadable.json")
+            try? FileManager.default.removeItem(at: aside)
+            try? FileManager.default.moveItem(at: presetsURL, to: aside)
+        }
     }
 }
