@@ -128,7 +128,7 @@ round any of the numbers in that file: each one was measured against what macOS 
 - **No arrow and no animation.** macOS 27 puts its own menu bar panels up and takes them down
   instantly, and Control Centre's Wi-Fi panel is a plain rounded rectangle with no arrow.
 - **`isFloatingPanel` before `level`.** Setting `isFloatingPanel` resets the level to floating (3), under the Dock and the menu bar, so it goes first and `.popUpMenu` (101) after it.
-- **`close()` is an override.** A `close(_ sender: Any? = nil)` is a second method, and every plain `close()` call reached NSWindow's instead, leaving both monitors installed: Escape was swallowed across the app. The monitors also ignore a panel that is hidden or has a sheet attached, and Escape from another window or a sheet passes through. The same file lives in the other Imperator apps, where these fixes are not in yet.
+- **`close()` is an override.** A `close(_ sender: Any? = nil)` is a second method, and every plain `close()` call reached NSWindow's instead, leaving both monitors installed: Escape was swallowed across the app. The monitors also ignore a panel that is hidden or has a sheet attached, and Escape from another window or a sheet passes through. The same file lives in the other Imperator menu bar apps (AirDrop, CRT Overlay, DefaultBrowser, Docks, FinderTerminal, FreeGames, MenuBarFolders, RetroPong, WidgetClock), and these fixes are ported to all of them; a change here belongs in every copy.
 - **The panel owns the dismissal.** Its global click monitor skips clicks inside its own frame
   and inside the status item's window, because the first click into an inactive accessory app
   reaches a global monitor too and would otherwise close the panel out from under the click, or
