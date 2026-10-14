@@ -324,14 +324,16 @@ struct CollapsibleHeader: View {
     }
 }
 
-/// The dot that marks the active output or preset.
+/// The radio mark of an output or preset row, the same as the radio buttons in
+/// the other Imperator apps (FinderTerminal): a ring with a brand red dot in it
+/// when active, an empty `.secondary` ring otherwise.
 struct ActiveDot: View {
     let isActive: Bool
 
     var body: some View {
-        Circle()
-            .fill(isActive ? AppColors.brand : Color.gray.opacity(0.3))
-            .frame(width: 8, height: 8)
+        Image(systemName: isActive ? "largecircle.fill.circle" : "circle")
+            .font(.system(size: 11))
+            .foregroundStyle(isActive ? AppColors.brand : Color.secondary)
     }
 }
 
