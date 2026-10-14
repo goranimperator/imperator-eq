@@ -120,7 +120,7 @@ Colors and UI must follow the Imperator Apps BrandBook (separate repo). Key rule
 - Panel width: 340pt
 - Dark mode forced: `NSApp.appearance = NSAppearance(named: .darkAqua)`
 - `UserDefaults.standard.set(0, forKey: "AppleAccentColor")` at launch
-- Toggle: `.switch` style, scale 0.55, tint `AppColors.brand`, `.labelsHidden()`, and **no** `.frame`. Brandbook 7.2: the switch is 54x24pt on macOS 27 and `scaleEffect(0.55)` gives 29.7x13.2, so a 36x20 frame is invisible padding that reads as a size guarantee it does not give
+- Toggle: `.switch` style, scale 0.55, tint `AppColors.brand`, `.labelsHidden()`, and **no** `.frame`. Brandbook 7.2: the switch is 54x24pt on macOS 27 and `scaleEffect(0.55)` gives 29.7x13.2, so a 36x20 frame is invisible padding that reads as a size guarantee it does not give. The layout frame stays 54pt wide after scaling, so a switch scaled from its centre draws 12pt inside its row's edge: at the right end of a row it scales from its trailing edge, `.brandSwitch(anchor: .trailing)` (the header switch, measured flush with the 16pt content edge)
 - **Cursor: the system default everywhere.** No `.cursor(...)`, no `NSCursor` push or pop, no pointing hand, on links included. Goran's rule, and it overrides anything the brandbook says about pointer cursors
 - Text on the panel is `.primary` or `.secondary`. Brand red measures 1.73:1 on the panel background and a resting `HoverButton` (45% opacity) 3.35:1, both under the 4.5:1 caption text needs, so neither carries text that has to be read. The one exception is white on a brand red fill, 7.96:1: the selected Stereo/Mono half, the in-row Update pill and the update banner
 

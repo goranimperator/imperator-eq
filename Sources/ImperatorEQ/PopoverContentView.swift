@@ -52,7 +52,7 @@ struct PopoverContentView: View {
             Spacer()
 
             Toggle("", isOn: $store.isEnabled)
-                .brandSwitch()
+                .brandSwitch(anchor: .trailing)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
@@ -345,9 +345,13 @@ private struct HoverDimmed: ViewModifier {
 extension View {
     /// Brandbook 7.2's switch: the system switch scaled to 0.55, brand tint, no
     /// label, and no frame, since a frame would only add invisible padding.
-    func brandSwitch() -> some View {
+    ///
+    /// Scaling leaves the layout frame at full size, 54 pt wide, so a switch
+    /// scaled from its centre sits 12 pt inside whatever it is aligned to. At the
+    /// right end of a row, `anchor: .trailing` puts its drawn edge on the row's.
+    func brandSwitch(anchor: UnitPoint = .center) -> some View {
         toggleStyle(.switch)
-            .scaleEffect(0.55)
+            .scaleEffect(0.55, anchor: anchor)
             .tint(AppColors.brand)
             .labelsHidden()
     }
