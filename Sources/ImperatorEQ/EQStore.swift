@@ -174,6 +174,13 @@ final class EQStore: ObservableObject {
         activePresetId = nil
     }
 
+    /// The CONTROLS section back to neutral: every knob at 0 and balance in the
+    /// middle. The active preset stays, so its Update pill offers to save this.
+    func resetControls() {
+        controls = ControlValues()
+        balance = 0
+    }
+
     func presetNameExists(_ name: String) -> Bool {
         presets.contains { $0.name.lowercased() == name.lowercased() }
     }

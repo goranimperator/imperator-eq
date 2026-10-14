@@ -74,7 +74,8 @@ it all still works, so you can set the sound up before turning the EQ on. From t
 the Stereo/Mono row and PRESETS.
 
 Drag the band sliders to shape the sound, or pick a preset; the sound changes while you
-drag. **Reset** returns every band to flat. The CONTROLS knobs turn like Logic Pro's: press
+drag. **Reset** returns every band to flat, and the one in CONTROLS puts every knob back at 0
+and centres balance. The CONTROLS knobs turn like Logic Pro's: press
 and drag up or down, hold Shift for finer steps, and Option-click or double-click a knob to
 put it back at 0. Pointing at a knob shows its value. The balance slider sits under the
 knobs, with L and R at its ends; it snaps to the middle. Stereo is the default; a preset

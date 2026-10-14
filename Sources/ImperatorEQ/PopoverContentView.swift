@@ -122,13 +122,7 @@ struct PopoverContentView: View {
 
                 Spacer()
 
-                HoverButton(action: { store.resetBands() }) {
-                    HStack(spacing: 4) {
-                        PanelIcon(LucideIcons.rotateCCW)
-                        Text("Reset")
-                            .font(.caption)
-                    }
-                }
+                ResetButton { store.resetBands() }
             }
 
             EQBandsView(bands: $store.bands)
@@ -162,7 +156,11 @@ struct PopoverContentView: View {
     private var controlsSection: some View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 10) {
-                SectionTitle("CONTROLS")
+                HStack {
+                    SectionTitle("CONTROLS")
+                    Spacer()
+                    ResetButton { store.resetControls() }
+                }
                 HStack(spacing: 0) {
                     KnobView(name: "Gain", value: $store.controls.gain, range: -10...10)
                     KnobView(name: "Bass", value: $store.controls.bass, range: -10...10)
@@ -290,6 +288,21 @@ struct PanelButton: View {
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
         .accessibilityAddTraits(isToggle && isSelected ? .isSelected : [])
+    }
+}
+
+/// The Reset at the right of a section title: EQUALIZER and CONTROLS.
+struct ResetButton: View {
+    let action: () -> Void
+
+    var body: some View {
+        HoverButton(action: action) {
+            HStack(spacing: 4) {
+                PanelIcon(LucideIcons.rotateCCW)
+                Text("Reset")
+                    .font(.caption)
+            }
+        }
     }
 }
 
