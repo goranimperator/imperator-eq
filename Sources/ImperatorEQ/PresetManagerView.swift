@@ -19,7 +19,7 @@ struct PresetManagerView: View {
                             HStack(spacing: 3) {
                                 Image(systemName: "plus")
                                     .font(.system(size: 10))
-                                Text("Save")
+                                Text("Save current as new preset")
                                     .font(.caption)
                             }
                         }
