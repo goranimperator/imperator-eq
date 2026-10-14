@@ -172,7 +172,7 @@ struct PresetRowView: View {
             Spacer()
 
             if isModified {
-                // A red pill, the same fill as the panel's update banner.
+                // A red pill, the same fill as Update preset in the panel's update bar.
                 Button(action: onUpdate) {
                     Text("Update")
                         .font(.caption.weight(.semibold))

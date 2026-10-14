@@ -167,11 +167,11 @@ final class EQStore: ObservableObject {
             .sink { [weak self] _ in self?.saveState() }
     }
 
+    /// Every band flat. The active preset stays, so its Update offers to save this.
     func resetBands() {
         for i in bands.indices {
             bands[i].gain = 0.0
         }
-        activePresetId = nil
     }
 
     /// The CONTROLS section back to neutral: every knob at 0 and balance in the
@@ -228,6 +228,18 @@ final class EQStore: ObservableObject {
     /// The knobs right after the active preset was applied. Saved with the
     /// state, so a change made before a relaunch still shows after it.
     private var controlsWhenApplied = ControlValues()
+
+    /// Back to what the active preset holds, dropping every change since. A
+    /// preset saved before the knobs existed gets the knobs it was applied with.
+    func revertToActivePreset() {
+        guard let preset = activePreset else { return }
+        let baseline = controlsWhenApplied
+        applyPreset(preset)
+        if preset.controls == nil {
+            controls = baseline
+            controlsWhenApplied = baseline
+        }
+    }
 
     func renamePreset(_ preset: EQPreset, to name: String) {
         guard !preset.isDefault, let index = presets.firstIndex(where: { $0.id == preset.id }) else { return }

@@ -26,8 +26,9 @@ so macOS cannot vouch for it. It is provided as is, with no warranty, under the 
   both channels on both sides, for one earbud or hard-panned tracks)
 - Named presets you can save, rename, reorder and delete. A preset keeps the bands, the
   knobs, balance and Stereo/Mono. When the sound moves away from the active preset, a red
-  **Update** pill appears on its row, and with PRESETS closed a full-width **Changes made -
-  update preset** button at the bottom of the panel saves it in one click
+  **Update** pill appears on its row. With PRESETS closed, three buttons at the bottom of the
+  panel take over: **Update preset** saves into it, **New preset** saves the sound as a new
+  one, and **Reset preset** goes back to what the preset holds
 - Picks the Mac's sound output from the panel, the same setting as the Sound menu, with
   sound effects moving along when Sound settings play them through the selected device
 - Runs in the menu bar with no Dock icon, and can open at login
@@ -81,9 +82,10 @@ put it back at 0. Pointing at a knob shows its value. The balance slider sits un
 knobs, with L and R at its ends; it snaps to the middle. Stereo is the default; a preset
 saved in mono switches to mono when you pick it.
 
-Change anything while a preset you saved is active (a band, a knob, balance or
-Stereo/Mono) and the panel offers to save it into that preset: the **Update** pill on its
-row, or the button at the bottom when PRESETS is closed. Clicking the preset itself instead
+Change anything while a preset you saved is active (a band, a knob, balance, Stereo/Mono,
+or either Reset) and the panel offers to save it into that preset: the **Update** pill on
+its row, or **Update preset** at the bottom when PRESETS is closed. Next to it, **New
+preset** saves the sound as a new one instead, and **Reset preset** drops the changes. Clicking the preset itself instead
 goes back to what it holds. The built-in presets cannot be changed, so they get neither.
 
 The output list sets the Mac's sound output, the same setting as the Sound menu, and the EQ
@@ -258,8 +260,8 @@ The app is not notarized, so every machine needs the right-click **Open** on fir
 
 ## Third-party
 
-Two icons, the save button's plus and Reset's rotate arrow, come from [Lucide](https://lucide.dev)
-under the ISC License (the plus also under Feather's MIT License); the notices are in
+Three icons, plus, check and Reset's rotate arrow, come from [Lucide](https://lucide.dev) under
+the ISC License (plus and check also under Feather's MIT License); the notices are in
 `Resources/ThirdPartyNotices.txt` and inside the app bundle. Beyond
 that the app uses Apple frameworks only.
 

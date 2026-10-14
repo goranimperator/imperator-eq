@@ -1,5 +1,5 @@
-Imperator EQ includes two icons from Lucide (https://lucide.dev): plus and
-rotate-ccw. They are used under the following licenses.
+Imperator EQ includes three icons from Lucide (https://lucide.dev): plus,
+check and rotate-ccw. They are used under the following licenses.
 
 ISC License
 
@@ -19,8 +19,8 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 ---
 
-The plus icon is one of the Lucide icons derived from the Feather project,
-which is also under the following license.
+The plus and check icons are among the Lucide icons derived from the Feather
+project, which are also under the following license.
 
 The MIT License (MIT)
 

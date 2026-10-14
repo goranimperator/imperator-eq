@@ -6,6 +6,7 @@ struct PopoverContentView: View {
     @EnvironmentObject var engine: AudioEngine
     let quitAction: () -> Void
     let dismissAction: () -> Void
+    @State private var showNewPresetSheet = false
 
     static let width: CGFloat = 340
     static let offOpacity = 0.3
@@ -37,6 +38,16 @@ struct PopoverContentView: View {
         // scrolling inside a fixed box.
         .fixedSize(horizontal: false, vertical: true)
         .background(AppColors.popoverBackground)
+        // On the panel rather than on the update bar, which goes away as soon
+        // as the new preset is saved and active.
+        .sheet(isPresented: $showNewPresetSheet) {
+            PresetNameSheet(title: "Save Preset", isTaken: store.presetNameExists) { name in
+                store.savePreset(name: name)
+                showNewPresetSheet = false
+            } onCancel: {
+                showNewPresetSheet = false
+            }
+        }
     }
 
     /// Drawn once. The header is rebuilt on every state change and the glyph
@@ -130,17 +141,29 @@ struct PopoverContentView: View {
         }
     }
 
-    /// With PRESETS closed, a change to the active preset would go unnoticed, so a
-    /// full-width button offers to save it. Every kind of change counts: bands,
-    /// knobs, balance, stereo/mono (`EQStore.differs`). Built-in presets cannot be
-    /// updated, so they get no banner.
+    /// With PRESETS closed, a change to the active preset would go unnoticed, so
+    /// three buttons offer what to do with it: Update preset saves into the active
+    /// preset, New preset saves the sound as a new one, Reset preset goes back to
+    /// what the preset holds. Every kind of change counts:
+    /// bands, knobs, balance, stereo/mono, a Reset (`EQStore.differs`). Built-in
+    /// presets cannot be updated, so they get no bar.
     @ViewBuilder
     private var updatePresetBanner: some View {
         if !store.presetsExpanded, let preset = store.activePreset, !preset.isDefault, store.differs(from: preset) {
-            PanelButton(title: "Changes made - update preset", isSelected: true, isToggle: false) {
-                store.updatePreset(preset)
+            HStack(spacing: 8) {
+                PanelButton(title: "Update preset", isSelected: true, isToggle: false, icon: LucideIcons.check) {
+                    store.updatePreset(preset)
+                }
+                .help("Save the current sound into \(preset.name)")
+                PanelButton(title: "New preset", isSelected: false, isToggle: false, icon: LucideIcons.plus) {
+                    showNewPresetSheet = true
+                }
+                .help("Save the current sound as a new preset")
+                PanelButton(title: "Reset preset", isSelected: false, isToggle: false, icon: LucideIcons.rotateCCW) {
+                    store.revertToActivePreset()
+                }
+                .help("Go back to \(preset.name) as saved")
             }
-            .help("Save the current sound into \(preset.name)")
         }
     }
 
@@ -260,30 +283,40 @@ struct HoverButton<Label: View>: View {
 
 // MARK: - Shared pieces of the panel
 
-/// A full-width button of the panel: the Stereo/Mono halves and the update
-/// banner. Selected is filled brand red with white text (7.96:1 on #A01818);
-/// otherwise a faint fill with secondary text. The banner is filled the same
-/// way but is no toggle (`isToggle` false), so VoiceOver hears no "selected".
+/// A full-width button of the panel: the Stereo/Mono halves and the three parts
+/// of the update bar. Selected is filled brand red with white text (7.96:1 on
+/// #A01818); otherwise a faint fill with secondary text. The update bar's buttons
+/// are no toggles (`isToggle` false), so VoiceOver hears no "selected".
 struct PanelButton: View {
     let title: String
     let isSelected: Bool
     var isToggle = true
+    /// A `LucideIcons` icon before the title.
+    var icon: NSImage?
     let action: () -> Void
     @State private var isHovered = false
 
     var body: some View {
         Button(action: action) {
-            Text(title)
-                .font(.caption.weight(isSelected ? .semibold : .regular))
-                .foregroundStyle(isSelected ? AnyShapeStyle(Color.white) : AnyShapeStyle(.secondary))
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 6)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(isSelected ? AppColors.brand
-                              : Color.white.opacity(isHovered ? 0.1 : 0.06))
-                )
-                .contentShape(Rectangle())
+            // 3 pt to the icon: at 4, Update preset in semibold needs 85.6 pt and a
+            // third of the update bar leaves 85.3 inside the padding.
+            HStack(spacing: 3) {
+                if let icon { PanelIcon(icon) }
+                Text(title)
+                    .lineLimit(1)
+            }
+            .font(.caption.weight(isSelected ? .semibold : .regular))
+            .foregroundStyle(isSelected ? AnyShapeStyle(Color.white) : AnyShapeStyle(.secondary))
+            // Buttons in a row share it equally; 6 pt on every side is the least
+            // each keeps around its content.
+            .padding(6)
+            .frame(maxWidth: .infinity)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(isSelected ? AppColors.brand
+                          : Color.white.opacity(isHovered ? 0.1 : 0.06))
+            )
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
