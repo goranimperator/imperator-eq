@@ -150,7 +150,8 @@ struct PresetDropDelegate: DropDelegate {
 struct PresetRowView: View {
     let preset: EQPreset
     let isActive: Bool
-    /// The active preset no longer matches the sound: Update is shown without hover.
+    /// The active preset no longer matches the sound. The Update pill is the only
+    /// way to save into a preset, so it can only ever write the active one.
     var isModified = false
     let onApply: () -> Void
     let onUpdate: () -> Void
@@ -191,13 +192,6 @@ struct PresetRowView: View {
                     HoverButton(action: onRename) {
                         Image(systemName: "pencil")
                             .font(.system(size: 10))
-                    }
-
-                    if !isModified {
-                        HoverButton(action: onUpdate) {
-                            Image(systemName: "arrow.down.circle")
-                                .font(.system(size: 10))
-                        }
                     }
 
                     HoverButton(action: { showConfirmDelete = true }) {
