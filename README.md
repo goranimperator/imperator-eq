@@ -69,7 +69,8 @@ to starting the EQ and letting macOS show its own prompt.
 ## Use
 
 Click the waveform icon in the menu bar to open the panel. The switch in the header turns
-processing on and off. From the top, the panel has the output list, EQUALIZER, CONTROLS,
+processing on and off. With it off, everything between the header and the footer fades, but
+it all still works, so you can set the sound up before turning the EQ on. From the top, the panel has the output list, EQUALIZER, CONTROLS,
 the Stereo/Mono row and PRESETS.
 
 Drag the band sliders to shape the sound, or pick a preset; the sound changes while you

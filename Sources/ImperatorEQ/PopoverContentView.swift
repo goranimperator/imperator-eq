@@ -8,6 +8,7 @@ struct PopoverContentView: View {
     let dismissAction: () -> Void
 
     static let width: CGFloat = 340
+    static let offOpacity = 0.3
 
     var body: some View {
         VStack(spacing: 0) {
@@ -23,6 +24,10 @@ struct PopoverContentView: View {
                 updatePresetBanner
             }
             .padding(16)
+            // With the switch off, everything between the header and the footer
+            // fades as one, at one level. It all stays usable, so the sound can
+            // be set up before the EQ is turned on.
+            .opacity(store.isEnabled ? 1 : Self.offOpacity)
             Divider()
             footerView
         }
@@ -123,7 +128,7 @@ struct PopoverContentView: View {
                 }
             }
 
-            EQBandsView(bands: $store.bands, isEnabled: store.isEnabled)
+            EQBandsView(bands: $store.bands)
                 .frame(height: 180)
         }
     }
@@ -156,12 +161,12 @@ struct PopoverContentView: View {
             VStack(alignment: .leading, spacing: 10) {
                 SectionTitle("CONTROLS")
                 HStack(spacing: 0) {
-                    KnobView(name: "Gain", value: $store.controls.gain, range: -10...10, isEnabled: store.isEnabled)
-                    KnobView(name: "Bass", value: $store.controls.bass, range: -10...10, isEnabled: store.isEnabled)
-                    KnobView(name: "Mid", value: $store.controls.mid, range: -10...10, isEnabled: store.isEnabled)
-                    KnobView(name: "Treble", value: $store.controls.treble, range: -10...10, isEnabled: store.isEnabled)
-                    KnobView(name: "Warmth", value: $store.controls.warmth, range: 0...10, isEnabled: store.isEnabled)
-                    KnobView(name: "Limiter", value: $store.controls.limiter, range: 0...10, isEnabled: store.isEnabled)
+                    KnobView(name: "Gain", value: $store.controls.gain, range: -10...10)
+                    KnobView(name: "Bass", value: $store.controls.bass, range: -10...10)
+                    KnobView(name: "Mid", value: $store.controls.mid, range: -10...10)
+                    KnobView(name: "Treble", value: $store.controls.treble, range: -10...10)
+                    KnobView(name: "Warmth", value: $store.controls.warmth, range: 0...10)
+                    KnobView(name: "Limiter", value: $store.controls.limiter, range: 0...10)
                 }
             }
             balanceSection

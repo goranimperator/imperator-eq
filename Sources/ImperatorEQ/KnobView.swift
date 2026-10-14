@@ -16,7 +16,6 @@ struct KnobView: View {
     let name: String
     @Binding var value: Float
     let range: ClosedRange<Float>
-    var isEnabled = true
 
     /// Where the current drag counts from: the value and the pointer's height
     /// when it began, or when Shift was last pressed or released, so changing the
@@ -68,7 +67,6 @@ struct KnobView: View {
                 .lineLimit(1)
         }
         .frame(maxWidth: .infinity)
-        .opacity(isEnabled ? 1 : 0.3)
         .accessibilityElement()
         .accessibilityLabel(name)
         .accessibilityValue(formatted)

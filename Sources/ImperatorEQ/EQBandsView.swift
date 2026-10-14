@@ -2,7 +2,6 @@ import SwiftUI
 
 struct EQBandsView: View {
     @Binding var bands: [EQBand]
-    let isEnabled: Bool
 
     var body: some View {
         GeometryReader { geometry in
@@ -14,8 +13,7 @@ struct EQBandsView: View {
                     EQBandColumn(
                         band: $bands[index],
                         maxHeight: maxHeight,
-                        width: bandWidth,
-                        isEnabled: isEnabled
+                        width: bandWidth
                     )
                 }
             }
@@ -27,7 +25,6 @@ struct EQBandColumn: View {
     @Binding var band: EQBand
     let maxHeight: CGFloat
     let width: CGFloat
-    let isEnabled: Bool
 
     private let maxGain: Float = 12.0
 
@@ -48,7 +45,6 @@ struct EQBandColumn: View {
                         width: width * 0.4,
                         height: max(2, normalizedGain * maxHeight)
                     )
-                    .opacity(isEnabled ? 1.0 : 0.3)
 
                 ForEach(0..<11, id: \.self) { tick in
                     let tickY = CGFloat(tick) / 10.0 * maxHeight
@@ -64,7 +60,6 @@ struct EQBandColumn: View {
                     .frame(width: width * 0.5, height: 14)
                     .shadow(color: .black.opacity(0.35), radius: 2, y: 1)
                     .offset(y: -(fillHeight - 7))
-                    .opacity(isEnabled ? 1.0 : 0.3)
             }
             .frame(height: maxHeight)
             .contentShape(Rectangle())
