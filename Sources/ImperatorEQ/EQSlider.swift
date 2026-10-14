@@ -13,6 +13,12 @@ struct EQSlider: View {
         CGFloat((value - range.lowerBound) / (range.upperBound - range.lowerBound))
     }
 
+    /// Where 0 sits on the track, or the nearer end when the range leaves it out.
+    private var zeroNormalized: CGFloat {
+        let zero = min(max(0, range.lowerBound), range.upperBound)
+        return CGFloat((zero - range.lowerBound) / (range.upperBound - range.lowerBound))
+    }
+
     private var centerValue: Float {
         (range.lowerBound + range.upperBound) / 2
     }
@@ -36,18 +42,21 @@ struct EQSlider: View {
                     with: .color(Color.gray.opacity(0.2))
                 )
 
+                // The fill grows from 0 towards the thumb: from the middle on a
+                // range that spans 0 (balance), so centred shows no fill.
+                let zeroX = thumbSize / 2 + zeroNormalized * trackWidth
                 let fillRect = CGRect(
-                    x: thumbSize / 2,
+                    x: min(zeroX, thumbCenterX),
                     y: centerY - trackHeight / 2,
-                    width: thumbCenterX - thumbSize / 2,
+                    width: abs(thumbCenterX - zeroX),
                     height: trackHeight
                 )
                 context.fill(
                     Path(fillRect),
                     with: .linearGradient(
                         Gradient(colors: AppColors.gradientColors.reversed()),
-                        startPoint: CGPoint(x: fillRect.minX, y: 0),
-                        endPoint: CGPoint(x: fillRect.maxX, y: 0)
+                        startPoint: CGPoint(x: zeroX, y: 0),
+                        endPoint: CGPoint(x: thumbCenterX, y: 0)
                     )
                 )
 
