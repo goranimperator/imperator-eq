@@ -5,6 +5,9 @@ import AppKit
 if CommandLine.arguments.contains("--about-check") {
     exit(MainActor.assumeIsolated { AboutCheck.run() })
 }
+if CommandLine.arguments.contains("--tone-check") {
+    exit(ToneCheck.run())
+}
 if CommandLine.arguments.contains("--engine-check") {
     exit(EngineCheck.run(CommandLine.arguments))
 }

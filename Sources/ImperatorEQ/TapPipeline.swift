@@ -7,14 +7,43 @@ struct EQSettings: Sendable, Equatable {
     static let frequencies: [Float] = [32, 64, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]
     static let bandCount = frequencies.count
 
+    /// The CONTROLS section's Bass, Mid and Treble, run as three more bands of
+    /// the same `AUNBandEQ` after the ten above, so they need no unit, add no
+    /// latency and no real-time code: a low shelf, a wide peak and a high shelf,
+    /// the shape of a hi-fi tone control. A shelf's frequency is its half-gain
+    /// point, so 120 Hz puts nearly the full boost on 60 Hz and 5 kHz on 10 kHz.
+    /// Treble's corner is pulled below Nyquist on low-rate outputs.
+    static let toneBands: [(type: Int, frequency: Float, bandwidth: Float)] = [
+        (kAUNBandEQFilterType_LowShelf, 120, 1),
+        (kAUNBandEQFilterType_Parametric, 1000, 2),
+        (kAUNBandEQFilterType_HighShelf, 5000, 1),
+    ]
+    /// A knob step in dB: the knobs run -10...10, so the range matches the bands' 12 dB.
+    static let toneDecibelsPerStep: Float = 1.2
+
     /// Gain per band in dB, one entry per frequency above.
     var gains: [Float]
-    /// Linear output gain, 0...2, where 1 is the level the apps play at.
-    var volume: Float
     /// -1 is full left, 1 full right.
     var balance: Float
+    /// Bass, mid and treble gain in dB.
+    var tone: [Float] = [0, 0, 0]
+    /// Warmth, 0 (off) to 1 (most); see `Warmth`.
+    var warmth: Float = 0
+    /// The Gain knob in dB.
+    var gain: Float = 0
+    /// The Limiter knob, 0 (off) to 1 (+12 dB into the ceiling); see `Limiter`.
+    var limiter: Float = 0
+    /// Both channels carry (L + R) / 2.
+    var mono = false
 
-    static let flat = EQSettings(gains: Array(repeating: 0, count: bandCount), volume: 1, balance: 0)
+    static let flat = EQSettings(gains: Array(repeating: 0, count: bandCount), balance: 0)
+
+    /// The Gain knob as the linear factor the render applies.
+    var outputGain: Float { powf(10, gain / 20) }
+
+    /// The Limiter knob as the linear gain into the limiter, up to +12 dB; 0
+    /// takes the limiter out of the path.
+    var limiterDrive: Float { limiter > 0 ? powf(10, limiter * 12 / 20) : 0 }
 }
 
 /// Numbers the IO thread publishes for the watchdog and the engine check.
@@ -43,8 +72,116 @@ struct RenderStats {
 
 /// Written by the engine's queue, read by the IO thread every cycle.
 struct RenderParams {
-    var volume: Float = 1
+    /// The Gain knob as a linear factor.
+    var outputGain: Float = 1
     var balance: Float = 0
+    var warmth: Float = 0
+    /// Linear gain into the limiter; 0 means the Limiter knob is off.
+    var limiterDrive: Float = 0
+    var mono = false
+}
+
+/// The Stereo/Mono choice: mono puts the average of left and right on both, so
+/// one earbud, or a track panned hard to one side, still carries everything.
+/// It runs on the EQ's output, before balance, so balance still pans the result.
+enum Mono {
+    static func process(left: UnsafeMutablePointer<Float>, right: UnsafeMutablePointer<Float>, frames: Int) {
+        for i in 0..<frames {
+            let mid = (left[i] + right[i]) * 0.5
+            left[i] = mid
+            right[i] = mid
+        }
+    }
+}
+
+/// The Limiter knob: a zero-latency peak limiter at the very end of the chain,
+/// in the manner of a mastering maximizer (Waves L1). The knob raises the level
+/// going into it, up to +12 dB, against a fixed ceiling, so turning it up makes
+/// the sound louder and denser while no sample ever passes the ceiling, Gain and
+/// the Gain knob included.
+///
+/// No lookahead, because latency is what this app avoids: the gain drops at
+/// once on a peak and recovers over 100 ms. All channels share one gain, so the
+/// stereo image does not move. At 0 it is out of the path entirely.
+enum Limiter {
+    /// -0.2 dBFS.
+    static let ceiling: Float = 0.977
+    static let releaseSeconds: Float = 0.1
+
+    static func releaseCoefficient(sampleRate: Float64) -> Float {
+        expf(-1 / (releaseSeconds * Float(sampleRate)))
+    }
+
+    /// In place on interleaved frames. `envelope` is the gain the limiter
+    /// currently applies, carried from cycle to cycle. Real-time safe.
+    static func process(_ out: UnsafeMutablePointer<Float>, frames: Int, channels: Int, drive: Float,
+                        envelope: UnsafeMutablePointer<Float>, release: Float) {
+        guard drive > 0 else {
+            envelope.pointee = 1
+            return
+        }
+        var gain = envelope.pointee
+        var frame = out
+        for _ in 0..<frames {
+            var peak: Float = 0
+            for ch in 0..<channels { peak = max(peak, abs(frame[ch] * drive)) }
+            let target: Float = peak > ceiling ? ceiling / peak : 1
+            gain = target < gain ? target : target + (gain - target) * release
+            let factor = drive * gain
+            for ch in 0..<channels { frame[ch] *= factor }
+            frame += channels
+        }
+        envelope.pointee = gain
+    }
+}
+
+/// The Warmth knob: subtle harmonic saturation on the EQ's output.
+///
+/// A low-order polynomial, `x + w (a2 x^2 - a3 x^3)`, rather than a tanh or a
+/// clipper. The x^2 term adds the 2nd harmonic (the "tube" one), the x^3 term a
+/// little 3rd, both growing with level, so quiet passages stay clean and loud
+/// ones get rich. The small-signal gain stays exactly 1 and the level hardly
+/// moves, which is the "without changing the volume" part; and harmonics stop
+/// at 3x the input, so it aliases far less than a clipper. The x^2 term also
+/// makes a little DC, which a 3.5 Hz blocker removes.
+enum Warmth {
+    static let a2: Float = 0.2
+    static let a3: Float = 0.1
+    static let blockerHz: Float = 3.5
+
+    /// The one-pole DC blocker's coefficient for the output's rate. A fixed one
+    /// would move the corner with the rate, to 15 Hz at 192 kHz, and the
+    /// blocker filters the whole signal while Warmth is on.
+    static func blockerCoefficient(sampleRate: Float64) -> Float {
+        1 - 2 * .pi * blockerHz / Float(sampleRate)
+    }
+
+    /// In place on one plane. `state` holds the blocker's previous input and
+    /// output for this channel. Real-time safe: arithmetic only.
+    static func process(_ samples: UnsafeMutablePointer<Float>, frames: Int, amount w: Float, blocker: Float,
+                        state: UnsafeMutablePointer<Float>) {
+        guard w > 0 else {
+            state[0] = 0
+            state[1] = 0
+            return
+        }
+        var previousIn = state[0]
+        var previousOut = state[1]
+        for i in 0..<frames {
+            let x = samples[i]
+            let shaped = x + w * (a2 * x * x - a3 * x * x * x)
+            let out = shaped - previousIn + blocker * previousOut
+            previousIn = shaped
+            previousOut = out
+            samples[i] = out
+        }
+        // In silence the output decays towards 0 but never reaches it: it ends
+        // in the subnormal range, which costs Intel processors far more per
+        // operation, on every sample, until the sound comes back.
+        if abs(previousOut) < 1e-15 { previousOut = 0 }
+        state[0] = previousIn
+        state[1] = previousOut
+    }
 }
 
 enum PipelineError: Error, CustomStringConvertible {
@@ -78,7 +215,7 @@ enum PipelineError: Error, CustomStringConvertible {
 ///
 /// ```
 /// apps -> [tap on output stream 0, muted while read] -> aggregate input
-///      -> IOProc: AUNBandEQ, volume, balance -> aggregate output -> device
+///      -> IOProc: AUNBandEQ, warmth, gain, balance, limiter -> aggregate output -> device
 /// ```
 ///
 /// Design decisions, each one load-bearing:
@@ -172,7 +309,8 @@ final class TapPipeline {
             }
 
             let context = RenderContext(eqUnit: eqUnit, tapBufferIndex: tapBufferIndex, channels: channels,
-                                        eqChannels: eqChannels, maxFrames: maxFrames)
+                                        eqChannels: eqChannels, maxFrames: maxFrames,
+                                        sampleRate: format.mSampleRate)
             let contextRef = Unmanaged.passRetained(context)
             undo.append { contextRef.release() }
 
@@ -186,7 +324,7 @@ final class TapPipeline {
             let initStatus = AudioUnitInitialize(eqUnit)
             guard initStatus == noErr else { throw PipelineError.audioUnit("initialize", initStatus) }
             // Initializing resets every parameter, so the bands go on after it.
-            configureBands(eqUnit)
+            configureBands(eqUnit, sampleRate: format.mSampleRate)
 
             let pipeline = TapPipeline(outputDevice: output, outputUID: outputUID, outputName: outputName,
                                        sampleRate: format.mSampleRate, channels: channels,
@@ -319,7 +457,10 @@ final class TapPipeline {
         guard status == noErr else { throw PipelineError.io("stream usage", status) }
     }
 
-    private static func makeEQ(sampleRate: Float64, channels: Int) throws -> AudioUnit {
+    /// The EQ unit with its formats and band count set, uninitialized: the caller
+    /// sets the render callback, initializes it, then calls `configureBands`.
+    /// `--tone-check` measures the same unit offline.
+    static func makeEQ(sampleRate: Float64, channels: Int) throws -> AudioUnit {
         var description = AudioComponentDescription(componentType: kAudioUnitType_Effect,
                                                     componentSubType: kAudioUnitSubType_NBandEQ,
                                                     componentManufacturer: kAudioUnitManufacturer_Apple,
@@ -351,11 +492,11 @@ final class TapPipeline {
         try set(kAudioUnitProperty_StreamFormat, kAudioUnitScope_Output, format, "output format")
         try set(kAudioUnitProperty_MaximumFramesPerSlice, kAudioUnitScope_Global, UInt32(maxFrames), "max frames")
         try set(AudioUnitPropertyID(kAUNBandEQProperty_NumberOfBands), kAudioUnitScope_Global,
-                UInt32(EQSettings.bandCount), "band count")
+                UInt32(EQSettings.bandCount + EQSettings.toneBands.count), "band count")
         return unit
     }
 
-    private static func configureBands(_ unit: AudioUnit) {
+    static func configureBands(_ unit: AudioUnit, sampleRate: Float64) {
         for (i, frequency) in EQSettings.frequencies.enumerated() {
             let band = AudioUnitParameterID(i)
             AudioUnitSetParameter(unit, AudioUnitParameterID(kAUNBandEQParam_FilterType) + band,
@@ -368,19 +509,44 @@ final class TapPipeline {
             AudioUnitSetParameter(unit, AudioUnitParameterID(kAUNBandEQParam_BypassBand) + band,
                                   kAudioUnitScope_Global, 0, 0, 0)
         }
+        for (i, tone) in EQSettings.toneBands.enumerated() {
+            let band = AudioUnitParameterID(EQSettings.bandCount + i)
+            let frequency = min(tone.frequency, Float(sampleRate) * 0.4)
+            AudioUnitSetParameter(unit, AudioUnitParameterID(kAUNBandEQParam_FilterType) + band,
+                                  kAudioUnitScope_Global, 0, AudioUnitParameterValue(tone.type), 0)
+            AudioUnitSetParameter(unit, AudioUnitParameterID(kAUNBandEQParam_Frequency) + band,
+                                  kAudioUnitScope_Global, 0, frequency, 0)
+            AudioUnitSetParameter(unit, AudioUnitParameterID(kAUNBandEQParam_Bandwidth) + band,
+                                  kAudioUnitScope_Global, 0, tone.bandwidth, 0)
+            // Never bypassed, not even at 0 dB, where the band is flat anyway:
+            // bypassing it there and back when the knob moves would switch the
+            // filter chain under the playing audio.
+            AudioUnitSetParameter(unit, AudioUnitParameterID(kAUNBandEQParam_BypassBand) + band,
+                                  kAudioUnitScope_Global, 0, 0, 0)
+        }
     }
 
     // MARK: - Run
 
     /// Parameter changes are safe while rendering: `AUNBandEQ` takes parameter
-    /// writes from any thread, and volume and balance are single aligned words.
+    /// writes from any thread, and the render's own parameters are single aligned words.
     func apply(_ settings: EQSettings) {
-        for (i, gain) in settings.gains.prefix(EQSettings.bandCount).enumerated() {
-            AudioUnitSetParameter(eqUnit, AudioUnitParameterID(kAUNBandEQParam_Gain) + AudioUnitParameterID(i),
+        Self.applyGains(settings, to: eqUnit)
+        context.params.pointee.outputGain = settings.outputGain
+        context.params.pointee.balance = settings.balance
+        context.params.pointee.warmth = settings.warmth
+        context.params.pointee.limiterDrive = settings.limiterDrive
+        context.params.pointee.mono = settings.mono
+    }
+
+    /// The ten band gains, then Bass, Mid and Treble after them.
+    static func applyGains(_ settings: EQSettings, to unit: AudioUnit) {
+        let gains = Array(settings.gains.prefix(EQSettings.bandCount))
+            + Array(settings.tone.prefix(EQSettings.toneBands.count))
+        for (i, gain) in gains.enumerated() {
+            AudioUnitSetParameter(unit, AudioUnitParameterID(kAUNBandEQParam_Gain) + AudioUnitParameterID(i),
                                   kAudioUnitScope_Global, 0, gain, 0)
         }
-        context.params.pointee.volume = settings.volume
-        context.params.pointee.balance = settings.balance
     }
 
     /// Stops IO first, so the IOProc is finished with the context before
@@ -427,12 +593,23 @@ private final class RenderContext {
     let eqOutList: UnsafeMutableAudioBufferListPointer
     let params: UnsafeMutablePointer<RenderParams>
     let stats: UnsafeMutablePointer<RenderStats>
+    /// Two floats per EQ channel for the Warmth DC blocker, and its coefficient.
+    let warmthState: UnsafeMutablePointer<Float>
+    let warmthBlocker: Float
+    /// The limiter's current gain, and how fast it recovers per frame.
+    let limiterEnvelope: UnsafeMutablePointer<Float>
+    let limiterRelease: Float
 
     /// One-pole smoothing per cycle for the level meters.
     private static let levelSmoothing: Float = 0.2
 
-    init(eqUnit: AudioUnit, tapBufferIndex: Int, channels: Int, eqChannels: Int, maxFrames: Int) {
+    init(eqUnit: AudioUnit, tapBufferIndex: Int, channels: Int, eqChannels: Int, maxFrames: Int,
+         sampleRate: Float64) {
         self.eqUnit = eqUnit
+        limiterRelease = Limiter.releaseCoefficient(sampleRate: sampleRate)
+        warmthBlocker = Warmth.blockerCoefficient(sampleRate: sampleRate)
+        limiterEnvelope = .allocate(capacity: 1)
+        limiterEnvelope.initialize(to: 1)
         self.tapBufferIndex = tapBufferIndex
         self.channels = channels
         self.eqChannels = eqChannels
@@ -448,6 +625,8 @@ private final class RenderContext {
         }
         params = .allocate(capacity: 1)
         params.initialize(to: RenderParams())
+        warmthState = .allocate(capacity: 2 * eqChannels)
+        warmthState.initialize(repeating: 0, count: 2 * eqChannels)
         stats = .allocate(capacity: 1)
         stats.initialize(to: RenderStats())
     }
@@ -457,6 +636,8 @@ private final class RenderContext {
         eqOut.deallocate()
         free(eqOutList.unsafeMutablePointer)
         params.deallocate()
+        warmthState.deallocate()
+        limiterEnvelope.deallocate()
         stats.deallocate()
     }
 
@@ -500,15 +681,16 @@ private final class RenderContext {
             stats.pointee.latencyFrames = outputTime.pointee.mSampleTime - inputTime.pointee.mSampleTime
         }
 
-        let volume = params.pointee.volume
+        let level = params.pointee.outputGain
         let balance = params.pointee.balance
-        // Balance moves a stereo pair; volume scales every channel.
-        let leftGain = eqChannels == 2 ? volume * min(1, 1 - balance) : volume
-        let rightGain = volume * min(1, 1 + balance)
+        // Balance moves a stereo pair; Gain scales every channel.
+        let leftGain = eqChannels == 2 ? level * min(1, 1 - balance) : level
+        let rightGain = level * min(1, 1 + balance)
 
         guard frames <= maxFrames else {
-            copyThrough(tap: tap, out: out, frames: frames, leftGain: leftGain, rightGain: rightGain, volume: volume)
+            copyThrough(tap: tap, out: out, frames: frames, leftGain: leftGain, rightGain: rightGain, level: level)
             stats.pointee.passThroughs &+= 1
+            limit(out, frames: frames)
             measure(tap: tap, out: out, samples: samples, frames: frames)
             return
         }
@@ -530,10 +712,22 @@ private final class RenderContext {
         var flags = AudioUnitRenderActionFlags()
         let status = AudioUnitRender(eqUnit, &flags, outputTime, 0, UInt32(frames), eqOutList.unsafeMutablePointer)
         guard status == noErr else {
-            copyThrough(tap: tap, out: out, frames: frames, leftGain: leftGain, rightGain: rightGain, volume: volume)
+            copyThrough(tap: tap, out: out, frames: frames, leftGain: leftGain, rightGain: rightGain, level: level)
             stats.pointee.passThroughs &+= 1
+            limit(out, frames: frames)
             measure(tap: tap, out: out, samples: samples, frames: frames)
             return
+        }
+
+        let warmth = params.pointee.warmth
+        for ch in 0..<eqChannels {
+            Warmth.process(eqOut + ch * maxFrames, frames: frames, amount: warmth, blocker: warmthBlocker,
+                           state: warmthState + 2 * ch)
+        }
+        // A cycle that skips the EQ (pass-through, which does not happen in
+        // normal running) stays stereo: it copies the tap, which is read-only.
+        if eqChannels == 2 && params.pointee.mono {
+            Mono.process(left: eqOut, right: eqOut + maxFrames, frames: frames)
         }
 
         if eqChannels == 2 {
@@ -554,21 +748,28 @@ private final class RenderContext {
         }
 
         // Channels past the two the EQ takes, on a multichannel device, pass
-        // through at the same volume instead of going silent.
+        // through at the same level instead of going silent.
         for ch in eqChannels..<channels {
-            copyChannel(ch, from: tap, to: out, frames: frames, gain: volume)
+            copyChannel(ch, from: tap, to: out, frames: frames, gain: level)
         }
 
+        limit(out, frames: frames)
         measure(tap: tap, out: out, samples: samples, frames: frames)
     }
 
+    /// The Limiter knob, last in the chain so nothing after it can go over.
+    private func limit(_ out: UnsafeMutablePointer<Float>, frames: Int) {
+        Limiter.process(out, frames: frames, channels: channels, drive: params.pointee.limiterDrive,
+                        envelope: limiterEnvelope, release: limiterRelease)
+    }
+
     /// The tap straight to the output at the gains the EQ path applies, so a
-    /// cycle that skips the EQ loses the tone shaping but keeps the volume and
-    /// the balance: at volume 0 it stays silent.
+    /// cycle that skips the EQ loses the tone shaping but keeps Gain and the
+    /// balance.
     private func copyThrough(tap: UnsafeMutablePointer<Float>, out: UnsafeMutablePointer<Float>, frames: Int,
-                             leftGain: Float, rightGain: Float, volume: Float) {
+                             leftGain: Float, rightGain: Float, level: Float) {
         for ch in 0..<channels {
-            let gain = ch == 0 ? leftGain : (ch == 1 && eqChannels == 2 ? rightGain : volume)
+            let gain = ch == 0 ? leftGain : (ch == 1 && eqChannels == 2 ? rightGain : level)
             copyChannel(ch, from: tap, to: out, frames: frames, gain: gain)
         }
     }

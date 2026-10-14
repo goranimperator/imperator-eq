@@ -23,7 +23,7 @@ Two things in `build.sh` are load-bearing and must not be simplified away:
 - **SDK stamp.** `-Xlinker -platform_version -Xlinker macos -Xlinker 14.2 -Xlinker <sdk>` stamps `LC_BUILD_VERSION` with the current SDK while keeping the deployment target at macOS 14.2, the first release with Core Audio process taps. AppKit picks which generation of a control to draw from that `sdk` field, and SwiftPM otherwise stamps it with the deployment target. Verify with `otool -l <binary> | awk '/LC_BUILD_VERSION/,/^$/'`: it must read `minos 14.2` and the current `sdk`. `MIN_MACOS` in build.sh and `platforms:` in Package.swift must stay equal.
 - **Stable signing identity.** The app signs with `Imperator Dev`, not ad-hoc. An ad-hoc designated requirement is the cdhash, which changes every build, so macOS treats each update as a new app and drops its TCC grants. This app needs the System Audio Recording grant (see below), so ad-hoc would mean re-granting on every update. Override with `IMPERATOR_SIGN_IDENTITY`.
 
-There are no tests and no linter configured. Two gates are built into the binary:
+There are no tests and no linter configured. Three gates are built into the binary (the third, `--tone-check`, is described under Key Files):
 
 - `--about-check` builds the About panel and measures it against brandbook 10.2 and 10.3, printing `ABOUT_PANEL_OK` on success.
 - `--engine-check --report <path>` runs the real `TapPipeline` headless and writes JSON: start/stop cycles (tap and aggregate counts must return to the baseline; the HAL drops destroyed objects from its lists about 12 ms after the destroy call returns, so count after it settles), the tap's readback (private, `mutedWhenTapped`, this process excluded), and levels per phase once a tone arrives from another process (flat, 1 kHz +12 dB, and a tail after the tone ends that must read silence). `--mode soak --seconds N` runs flat for N seconds instead. Launch it with `open -n` so TCC applies the app's own grant; a process started from a terminal is attributed to the terminal. Quit the app first: two taps on one device play the sound twice.
@@ -52,7 +52,7 @@ Imperator EQ is a macOS menu bar app (LSUIElement, no Dock icon) that applies a 
 apps -> CATapDescription(excludingProcesses: [this app], deviceUID: default output, stream: 0)
         private, mutedWhenTapped
      -> private aggregate device (main sub-device = that output, tap drift-compensated)
-     -> IOProc: deinterleave -> AUNBandEQ (10 bands, +/-12 dB, 1 octave) -> volume, balance
+     -> IOProc: deinterleave -> AUNBandEQ (10 bands, +/-12 dB, 1 octave, + bass/mid/treble) -> warmth -> mono -> gain, balance -> limiter
      -> aggregate output stream 0 = the same device stream
 ```
 
@@ -65,18 +65,32 @@ Measured with `--engine-check` on the built-in speakers: flat EQ is exactly unit
 - **SystemAudioAccess.swift**: Permission status and request through the TCC lookup
 - **CoreAudioDevices.swift**: AudioObject property helpers: `value(_:_:as:)` and `set` for fixed-size properties, strings, streams, the default output, and `PropertyListener`. CFString properties come back at +1 and are taken retained
 - **EngineCheck.swift**: `--engine-check`
-- **EQStore.swift**: `@MainActor ObservableObject` with all UI state (`bands`, `volume`, `balance`, `isEnabled`, `presets`). Persists to `state.json`/`presets.json` in Application Support. Auto-saves via Combine debounce (1s)
+- **ToneCheck.swift**: `--tone-check`, offline proof that the CONTROLS knobs change the sound: Bass, Mid and Treble moved through the configured `AUNBandEQ` (60 Hz, 1 kHz, 10 kHz), Warmth's level and distortion, Gain's factor. Limiter's level and ceiling. Prints `TONE_CHECK_OK`
+- **KnobView.swift**: The CONTROLS knobs. Vertical drag (10 pt a step, Shift 4x finer), Option-click or double-click resets to 0, bipolar ranges draw from 12 o'clock. The dot is `.secondary`, the slider thumbs' grey, because brand red alone is too dim on the panel
+- **EQStore.swift**: `@MainActor ObservableObject` with all UI state (`bands`, `balance`, `controls`, `isEnabled`, `presets`). Persists to `state.json`/`presets.json` in Application Support. Auto-saves via Combine debounce (1s)
 - **AppDelegate.swift**: Status bar item, the `MenuBarPanel` (340pt wide), Combine bindings from EQStore → AudioEngine. It owns no click or key monitors: the panel does
-- **PopoverContentView.swift**: Main SwiftUI layout: header, output devices, volume, balance, EQ bands, presets, footer, and the pieces the sections share (`SectionTitle`, `CollapsibleHeader`, `ActiveDot`, `.brandSwitch()`, `.hoverDimmed()`, `.listRow`). No scroll view and no height cap: `.fixedSize(horizontal: false, vertical: true)` makes the panel exactly as tall as its content, so expanding a section grows the window. The old `.imperatorPopoverResize` notification, which guessed the extra height from preset and device counts, is gone
+- **PopoverContentView.swift**: Main SwiftUI layout: header, output devices, EQ bands, CONTROLS (knobs and an unlabelled balance slider), the Stereo/Mono row (`PanelButton`), presets, the update banner (shown with PRESETS closed when the active user preset differs from the sound, `EQStore.differs`), footer, and the pieces the sections share (`SectionTitle`, `CollapsibleHeader`, `ActiveDot`, `.brandSwitch()`, `.hoverDimmed()`, `.listRow`). No scroll view and no height cap: `.fixedSize(horizontal: false, vertical: true)` makes the panel exactly as tall as its content, so expanding a section grows the window. The old `.imperatorPopoverResize` notification, which guessed the extra height from preset and device counts, is gone
 - **MenuBarPanel.swift**: The menu bar surface, drawn by the app instead of by `NSPopover`. See the section below before changing any number in it
 - **StatusItemIcon.swift**: The app glyph, shared by the menu bar item (18pt) and the panel header (16pt)
 - **Theme.swift**: `AppColors` enum with brand colors per Imperator brandbook
 - **AboutPanel.swift**: Brandbook 10 About panel. `makePanel()` is split out of `show()` so the gate measures the real window. The SwiftUI view must carry a width but **no height**: an explicit height makes the content report its overflow and the window grows to match (292pt instead of 260pt)
 - **AboutCheck.swift**: `--about-check`, the brandbook gate for that panel
 
+### CONTROLS knobs
+
+Bass, Mid and Treble are bands 10 to 12 of the same `AUNBandEQ`: a low shelf at 120 Hz, a
+2-octave peak at 1 kHz and a high shelf at 5 kHz (a shelf's frequency is its half-gain point),
+1.2 dB per knob step. Warmth is `Warmth.process` in the render: `x + w (0.2 x^2 - 0.1 x^3)` plus
+a 3.5 Hz DC blocker (its coefficient set from the output's rate), so the level stays put and harmonics stop at 3x. Gain is the render's output factor
+(Volume Boost was removed in its favour; a saved boost, in the state and in each preset, is moved into Gain once on load, and both files still write `volume: 1` so that 1.1.1 can read them after a downgrade). Limiter is `Limiter.process`, the last stage in the render (after Gain and
+balance, in both the EQ path and the pass-through path): zero-latency peak limiter, linked
+across channels, instant attack, 100 ms release, ceiling -0.2 dBFS, the knob driving up to
++12 dB into it. At 0 it is out of the path, so the flat-is-unity measurement still holds.
+There is no auto pre-gain: with Limiter at 0, stacked boosts can clip. Mono (`Mono.process`, `EQStore.isMono`, saved in state and in presets; stereo is the default, and a preset without the key sets stereo) averages left and right on the EQ's output before balance; a pass-through cycle stays stereo.
+
 ### Critical Patterns
 
-**Real-time audio thread safety**: The IOProc runs on the HAL's real-time thread. No allocation, no locks, no Objective-C in `RenderContext.render`. Counters and levels live in C memory (`RenderStats`) written with plain aligned stores and read without a lock; volume and balance likewise (`RenderParams`). When the EQ cannot run for a cycle, the tap is copied through unprocessed, never silence: the apps are muted while the tap is read.
+**Real-time audio thread safety**: The IOProc runs on the HAL's real-time thread. No allocation, no locks, no Objective-C in `RenderContext.render`. Counters and levels live in C memory (`RenderStats`) written with plain aligned stores and read without a lock; Gain, balance, warmth and the limiter drive likewise (`RenderParams`). When the EQ cannot run for a cycle, the tap is copied through unprocessed, never silence: the apps are muted while the tap is read.
 
 **Own process excluded**: the tap excludes this app's process object, or it would capture its own output and feed back. `CoreAudioDevices.processObject(for:)` maps `kAudioObjectUnknown` to nil and the pipeline refuses to start without it.
 
@@ -86,7 +100,7 @@ Measured with `--engine-check` on the built-in speakers: flat EQ is exactly unit
 
 **Idle sleep**: `CoreAudioDevices.allowIdleSleepDuringIO()` runs at setup. Without it coreaudiod holds `PreventUserIdleSystemSleep` for the aggregate the whole time the switch is on, silence included (`pmset -g assertions`), and a MacBook never idle-sleeps. It is per process: an app that plays keeps its own assertion.
 
-**Settings reach the engine without a run loop hop**: `@Published` fires in willSet, so the EQ, volume and balance values come straight from `CombineLatest3` of the publishers. A `.receive(on: RunLoop.main)` hop does not run while a slider tracks the mouse, and the sound then changes only on mouse-up.
+**Settings reach the engine without a run loop hop**: `@Published` fires in willSet, so the EQ, balance, knob and stereo/mono values come straight from `CombineLatest4` of the publishers. A `.receive(on: RunLoop.main)` hop does not run while a slider tracks the mouse, and the sound then changes only on mouse-up.
 
 **Microphone permission, not verified**: tccd shows coreaudiod preflighting `kTCCServiceMicrophone` for this app even for the speakers-only aggregate. On this Mac a grant left from the loopback-driver version answers it. A fresh install, and an output with inputs of its own (USB headset, audio interface), have not been tried. The app declares no microphone usage string on purpose.
 
@@ -108,7 +122,7 @@ Colors and UI must follow the Imperator Apps BrandBook (separate repo). Key rule
 - `UserDefaults.standard.set(0, forKey: "AppleAccentColor")` at launch
 - Toggle: `.switch` style, scale 0.55, tint `AppColors.brand`, `.labelsHidden()`, and **no** `.frame`. Brandbook 7.2: the switch is 54x24pt on macOS 27 and `scaleEffect(0.55)` gives 29.7x13.2, so a 36x20 frame is invisible padding that reads as a size guarantee it does not give
 - **Cursor: the system default everywhere.** No `.cursor(...)`, no `NSCursor` push or pop, no pointing hand, on links included. Goran's rule, and it overrides anything the brandbook says about pointer cursors
-- Text on the panel is `.primary` or `.secondary`. Brand red measures 1.73:1 on the panel background and a resting `HoverButton` (45% opacity) 3.35:1, both under the 4.5:1 caption text needs, so neither carries text that has to be read
+- Text on the panel is `.primary` or `.secondary`. Brand red measures 1.73:1 on the panel background and a resting `HoverButton` (45% opacity) 3.35:1, both under the 4.5:1 caption text needs, so neither carries text that has to be read. The one exception is white on a brand red fill, 7.96:1: the selected Stereo/Mono half, the in-row Update pill and the update banner
 
 ## The menu bar panel
 

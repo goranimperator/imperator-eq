@@ -31,6 +31,8 @@ struct PresetManagerView: View {
                             PresetRowView(
                                 preset: preset,
                                 isActive: store.activePresetId == preset.id,
+                                isModified: store.activePresetId == preset.id && !preset.isDefault
+                                    && store.differs(from: preset),
                                 onApply: { store.applyPreset(preset) },
                                 onUpdate: { store.updatePreset(preset) },
                                 onDelete: { store.deletePreset(preset) },
@@ -148,6 +150,8 @@ struct PresetDropDelegate: DropDelegate {
 struct PresetRowView: View {
     let preset: EQPreset
     let isActive: Bool
+    /// The active preset no longer matches the sound: Update is shown without hover.
+    var isModified = false
     let onApply: () -> Void
     let onUpdate: () -> Void
     let onDelete: () -> Void
@@ -167,6 +171,21 @@ struct PresetRowView: View {
 
             Spacer()
 
+            if isModified {
+                // A red pill, the same fill as the panel's update banner.
+                Button(action: onUpdate) {
+                    Text("Update")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(AppColors.brand))
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .help("Save the current sound into this preset")
+            }
+
             if isHovered && !preset.isDefault {
                 HStack(spacing: 8) {
                     HoverButton(action: onRename) {
@@ -174,9 +193,11 @@ struct PresetRowView: View {
                             .font(.system(size: 10))
                     }
 
-                    HoverButton(action: onUpdate) {
-                        Image(systemName: "arrow.down.circle")
-                            .font(.system(size: 10))
+                    if !isModified {
+                        HoverButton(action: onUpdate) {
+                            Image(systemName: "arrow.down.circle")
+                                .font(.system(size: 10))
+                        }
                     }
 
                     HoverButton(action: { showConfirmDelete = true }) {

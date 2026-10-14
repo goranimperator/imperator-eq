@@ -17,8 +17,17 @@ so macOS cannot vouch for it. It is provided as is, with no warranty, under the 
 ## What it does
 
 - 10 EQ bands from 32 Hz to 16 kHz, plus or minus 12 dB each
-- Volume boost up to 200% and left/right balance
-- Named presets you can save, rename, reorder and delete
+- Six knobs in the CONTROLS section: Gain (-10 to +10, about 12 dB either way), Bass, Mid
+  and Treble (each -10 to +10, about 12 dB either way), Warmth (0 to 10, a little harmonic
+  saturation that makes thin audio sound fuller without making it louder) and Limiter (0 to
+  10, louder and denser with no peak ever above -0.2 dBFS, which also stops stacked boosts
+  from clipping)
+- Left/right balance, and a Stereo/Mono choice above the presets (mono plays the average of
+  both channels on both sides, for one earbud or hard-panned tracks)
+- Named presets you can save, rename, reorder and delete. A preset keeps the bands, the
+  knobs, balance and Stereo/Mono. When the sound moves away from the active preset, a red
+  **Update** pill appears on its row, and with PRESETS closed a full-width **Changes made -
+  update preset** button at the bottom of the panel saves it in one click
 - Picks the Mac's sound output from the panel, the same setting as the Sound menu, with
   sound effects moving along when Sound settings play them through the selected device
 - Runs in the menu bar with no Dock icon, and can open at login
@@ -59,11 +68,32 @@ to starting the EQ and letting macOS show its own prompt.
 
 ## Use
 
-Click the waveform icon in the menu bar to open the panel. The switch in the header turns processing on and
-off. Drag the band sliders to shape the sound, or pick a preset; the sound changes while you
-drag. **Reset** returns every band to flat. The output list sets the Mac's sound output, the
-same setting as the Sound menu, and the EQ follows it. **Open at Login** starts the app with
-the Mac.
+Click the waveform icon in the menu bar to open the panel. The switch in the header turns
+processing on and off. From the top, the panel has the output list, EQUALIZER, CONTROLS,
+the Stereo/Mono row and PRESETS.
+
+Drag the band sliders to shape the sound, or pick a preset; the sound changes while you
+drag. **Reset** returns every band to flat. The CONTROLS knobs turn like Logic Pro's: press
+and drag up or down, hold Shift for finer steps, and Option-click or double-click a knob to
+put it back at 0. Pointing at a knob shows its value. The balance slider sits under the
+knobs, with L and R at its ends; it snaps to the middle. Stereo is the default; a preset
+saved in mono switches to mono when you pick it.
+
+Change anything while a preset you saved is active (a band, a knob, balance or
+Stereo/Mono) and the panel offers to save it into that preset: the **Update** pill on its
+row, or the button at the bottom when PRESETS is closed. Clicking the preset itself instead
+goes back to what it holds. The built-in presets cannot be changed, so they get neither.
+
+The output list sets the Mac's sound output, the same setting as the Sound menu, and the EQ
+follows it. **Open at Login** starts the app with the Mac.
+
+### Upgrading from 1.1.1
+
+The Volume Boost slider is gone; the Gain knob does the same job. A saved boost moves into
+Gain once, both in the current settings and in each preset, at the same level within Gain's
+range of about 12 dB either way (200 % becomes Gain +5; anything under 25 % lands on -10).
+The settings files stay readable by 1.1.1, so going back to it loses the knobs and Stereo/Mono
+but not your presets.
 
 ## The menu bar panel
 
@@ -79,12 +109,12 @@ The app uses a Core Audio process tap, the API macOS 14.2 added for reading othe
 audio. The tap sits on the current output device and takes everything apps send to it,
 except the app's own sound. The app reads the tap through a private aggregate device whose
 only other member is that same output, runs each block through Apple's `AUNBandEQ` Audio
-Unit, applies volume and balance, and writes the result back to the output.
+Unit, applies the CONTROLS knobs and balance, and writes the result back to the output.
 
 ```
 apps -> tap on the default output (apps muted while the tap is read)
      -> private aggregate device
-     -> IOProc: AUNBandEQ (10 bands), volume, balance
+     -> IOProc: AUNBandEQ (10 bands + bass, mid, treble), warmth, mono, gain, balance, limiter
      -> the same output device
 ```
 
@@ -132,7 +162,7 @@ Two things the build does that are easy to miss:
   each update as a different app and drop the system audio recording permission. Override
   with `IMPERATOR_SIGN_IDENTITY` if you are building on a machine without that certificate.
 
-Two self-checks are built into the app. The first measures the About panel against the
+Three self-checks are built into the app. The first measures the About panel against the
 brandbook instead of trusting its own constants:
 
 ```bash
@@ -150,6 +180,14 @@ open -n -a "Imperator EQ" --args --engine-check --report /tmp/engine-check.json
 ```
 
 It waits for sound to arrive before it measures, so play something while it runs.
+
+The third renders test tones offline through the same EQ the app runs and prints what each
+CONTROLS knob does to them, in dB and in harmonic distortion. It needs no permission and plays
+nothing:
+
+```bash
+"/Applications/Imperator EQ.app/Contents/MacOS/ImperatorEQ" --tone-check
+```
 
 There are no tests and no linter.
 
@@ -176,7 +214,7 @@ Check the zip people download rather than the bundle in the repo: unzip it and r
 
 | Path | What lives there |
 | --- | --- |
-| `Sources/ImperatorEQ/main.swift` | Entry point and the two self-checks |
+| `Sources/ImperatorEQ/main.swift` | Entry point and the three self-checks |
 | `Sources/ImperatorEQ/AppDelegate.swift` | Status item, panel, bindings |
 | `Sources/ImperatorEQ/MenuBarPanel.swift` | The menu bar surface, drawn by the app rather than by `NSPopover` |
 | `Sources/ImperatorEQ/StatusItemIcon.swift` | The app glyph, shared by the menu bar item and the panel header |
@@ -188,6 +226,8 @@ Check the zip people download rather than the bundle in the repo: unzip it and r
 | `Sources/ImperatorEQ/EQStore.swift` | UI state and persistence to Application Support |
 | `Sources/ImperatorEQ/PopoverContentView.swift` | Panel layout, footer, launch-at-login toggle, and the pieces the sections share |
 | `Sources/ImperatorEQ/EQBandsView.swift` | The band sliders |
+| `Sources/ImperatorEQ/KnobView.swift` | The rotary knobs in the CONTROLS section |
+| `Sources/ImperatorEQ/ToneCheck.swift` | The `--tone-check` self-check for the knobs |
 | `Sources/ImperatorEQ/EQSlider.swift` | The slider control |
 | `Sources/ImperatorEQ/OutputDeviceView.swift` | Output device picker |
 | `Sources/ImperatorEQ/PresetManagerView.swift` | Preset list and editing |
@@ -197,8 +237,11 @@ Check the zip people download rather than the bundle in the repo: unzip it and r
 
 ## Known limits
 
+Nothing lowers the level before the EQ. With the Limiter knob at 0, bands, knobs and Gain
+boosted together can clip; turn Limiter up, or Gain down, if loud passages crackle.
+
 The EQ runs on the first two channels. On an output with more, the rest pass through at the
-same volume without EQ.
+same level without EQ.
 
 Some outputs cannot join an aggregate device, for example another aggregate device. On those
 the EQ does not run, the panel says so, and the sound plays as normal.

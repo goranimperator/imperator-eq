@@ -64,10 +64,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // the engine. No hop through RunLoop.main: its default mode does not
         // run while a slider is dragged, and the sound would change only on
         // mouse-up.
-        Publishers.CombineLatest3(eqStore.$bands, eqStore.$volume, eqStore.$balance)
+        Publishers.CombineLatest4(eqStore.$bands, eqStore.$balance, eqStore.$controls, eqStore.$isMono)
             .dropFirst()
-            .sink { [weak self] bands, volume, balance in
-                self?.audioEngine.settingsChanged(EQSettings(bands: bands, volume: volume, balance: balance))
+            .sink { [weak self] bands, balance, controls, mono in
+                self?.audioEngine.settingsChanged(EQSettings(bands: bands, balance: balance, controls: controls,
+                                                             mono: mono))
             }
             .store(in: &cancellables)
 

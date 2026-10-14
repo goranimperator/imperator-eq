@@ -7,3 +7,4 @@ Resources/AppIcon.iconset/
 dist/
 *.zip
 .claude/settings.local.json
+plan/knob-reference.webp

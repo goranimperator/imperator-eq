@@ -16,10 +16,11 @@ struct PopoverContentView: View {
             VStack(spacing: 16) {
                 engineNotice
                 OutputDeviceView()
-                volumeSection
-                balanceSection
                 eqSection
+                controlsSection
+                channelModeSection
                 PresetManagerView()
+                updatePresetBanner
             }
             .padding(16)
             Divider()
@@ -127,61 +128,60 @@ struct PopoverContentView: View {
         }
     }
 
-    private var volumeSection: some View {
-        sliderSection("VOLUME BOOST", value: "\(Int(store.volume * 100))%", $store.volume, in: 0...2) {
-            Image(systemName: "speaker.fill")
-        } trailing: {
-            Image(systemName: "speaker.wave.3.fill")
+    /// With PRESETS closed, a change to the active preset would go unnoticed, so a
+    /// full-width button offers to save it. Every kind of change counts: bands,
+    /// knobs, balance, stereo/mono (`EQStore.differs`). Built-in presets cannot be
+    /// updated, so they get no banner.
+    @ViewBuilder
+    private var updatePresetBanner: some View {
+        if !store.presetsExpanded, let preset = store.activePreset, !preset.isDefault, store.differs(from: preset) {
+            PanelButton(title: "Changes made - update preset", isSelected: true, isToggle: false) {
+                store.updatePreset(preset)
+            }
+            .help("Save the current sound into \(preset.name)")
         }
     }
 
+    /// Stereo or mono, two half-width buttons and no heading.
+    private var channelModeSection: some View {
+        HStack(spacing: 8) {
+            PanelButton(title: "Stereo", isSelected: !store.isMono) { store.isMono = false }
+            PanelButton(title: "Mono", isSelected: store.isMono) { store.isMono = true }
+        }
+    }
+
+    /// Always open: the six knobs, then the balance slider.
+    private var controlsSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 10) {
+                SectionTitle("CONTROLS")
+                HStack(spacing: 0) {
+                    KnobView(name: "Gain", value: $store.controls.gain, range: -10...10, isEnabled: store.isEnabled)
+                    KnobView(name: "Bass", value: $store.controls.bass, range: -10...10, isEnabled: store.isEnabled)
+                    KnobView(name: "Mid", value: $store.controls.mid, range: -10...10, isEnabled: store.isEnabled)
+                    KnobView(name: "Treble", value: $store.controls.treble, range: -10...10, isEnabled: store.isEnabled)
+                    KnobView(name: "Warmth", value: $store.controls.warmth, range: 0...10, isEnabled: store.isEnabled)
+                    KnobView(name: "Limiter", value: $store.controls.limiter, range: 0...10, isEnabled: store.isEnabled)
+                }
+            }
+            balanceSection
+        }
+    }
+
+    /// Balance without a heading or a readout: the slider with L and R at its ends.
     private var balanceSection: some View {
-        sliderSection("BALANCE", value: balanceLabel, $store.balance, in: -1...1) {
+        HStack(spacing: 8) {
             Text("L")
-        } trailing: {
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(width: 16)
+
+            EQSlider(value: $store.balance, range: -1...1, snapToCenter: true)
+
             Text("R")
-        }
-    }
-
-    /// A title with its value on the right, over a slider with a small label
-    /// at each end: volume and balance.
-    private func sliderSection<Leading: View, Trailing: View>(
-        _ title: String, value: String, _ binding: Binding<Float>, in range: ClosedRange<Float>,
-        @ViewBuilder leading: () -> Leading, @ViewBuilder trailing: () -> Trailing
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                SectionTitle(title)
-                Spacer()
-                Text(value)
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-                    .monospacedDigit()
-            }
-
-            HStack(spacing: 8) {
-                leading()
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-                    .frame(width: 16)
-
-                EQSlider(value: binding, range: range, snapToCenter: true)
-
-                trailing()
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-                    .frame(width: 16)
-            }
-        }
-    }
-
-    private var balanceLabel: String {
-        if abs(store.balance) < 0.05 {
-            return "Center"
-        } else if store.balance < 0 {
-            return "L \(Int(abs(store.balance) * 100))%"
-        } else {
-            return "R \(Int(store.balance * 100))%"
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(width: 16)
         }
     }
 
@@ -253,6 +253,37 @@ struct HoverButton<Label: View>: View {
 }
 
 // MARK: - Shared pieces of the panel
+
+/// A full-width button of the panel: the Stereo/Mono halves and the update
+/// banner. Selected is filled brand red with white text (7.96:1 on #A01818);
+/// otherwise a faint fill with secondary text. The banner is filled the same
+/// way but is no toggle (`isToggle` false), so VoiceOver hears no "selected".
+struct PanelButton: View {
+    let title: String
+    let isSelected: Bool
+    var isToggle = true
+    let action: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.caption.weight(isSelected ? .semibold : .regular))
+                .foregroundStyle(isSelected ? AnyShapeStyle(Color.white) : AnyShapeStyle(.secondary))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(isSelected ? AppColors.brand
+                              : Color.white.opacity(isHovered ? 0.1 : 0.06))
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .accessibilityAddTraits(isToggle && isSelected ? .isSelected : [])
+    }
+}
 
 /// The small title each section of the panel starts with.
 struct SectionTitle: View {

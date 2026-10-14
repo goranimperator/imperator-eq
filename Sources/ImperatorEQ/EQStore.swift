@@ -13,32 +13,100 @@ struct EQBand: Identifiable, Codable, Equatable {
     }
 }
 
+/// The CONTROLS knobs, in knob steps: Bass, Mid, Treble and Gain run -10...10
+/// with 0 flat, Warmth and Limiter 0...10 with 0 off.
+struct ControlValues: Codable, Equatable {
+    var bass: Float = 0
+    var mid: Float = 0
+    var treble: Float = 0
+    var warmth: Float = 0
+    var limiter: Float = 0
+    var gain: Float = 0
+
+    init() {}
+
+    /// Every key optional, so state and presets saved before a knob existed
+    /// still load, with that knob at 0.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        bass = try c.decodeIfPresent(Float.self, forKey: .bass) ?? 0
+        mid = try c.decodeIfPresent(Float.self, forKey: .mid) ?? 0
+        treble = try c.decodeIfPresent(Float.self, forKey: .treble) ?? 0
+        warmth = try c.decodeIfPresent(Float.self, forKey: .warmth) ?? 0
+        limiter = try c.decodeIfPresent(Float.self, forKey: .limiter) ?? 0
+        gain = try c.decodeIfPresent(Float.self, forKey: .gain) ?? 0
+    }
+
+    /// The removed Volume Boost (a factor, 0...2) as Gain knob steps, so a
+    /// saved boost keeps its level: 200 % is +6 dB, Gain +5. Gain cannot go
+    /// below -12 dB, so anything under 25 % lands on -10, the quietest it has;
+    /// 0 %, which played silence, too.
+    static func gainSteps(fromVolume volume: Float) -> Float {
+        let steps = (20 * log10(max(volume, 1e-6)) / EQSettings.toneDecibelsPerStep).rounded()
+        return min(max(steps, -10), 10)
+    }
+}
+
 struct EQPreset: Identifiable, Codable, Equatable {
     let id: UUID
     var name: String
     var bands: [EQBand]
-    var volume: Float
     var balance: Float
     var isDefault: Bool
+    /// Nil in presets saved before the CONTROLS knobs existed, and in the
+    /// built-in ones: applying those leaves the knobs where they are.
+    var controls: ControlValues?
+    /// Nil (built-in and older presets) means stereo, the default.
+    var isMono: Bool?
 
-    init(id: UUID = UUID(), name: String, bands: [EQBand], volume: Float = 1.0, balance: Float = 0.0, isDefault: Bool = false) {
+    init(id: UUID = UUID(), name: String, bands: [EQBand], balance: Float = 0.0,
+         isDefault: Bool = false, controls: ControlValues? = nil, isMono: Bool? = nil) {
         self.id = id
         self.name = name
         self.bands = bands
-        self.volume = volume
         self.balance = balance
         self.isDefault = isDefault
+        self.controls = controls
+        self.isMono = isMono
     }
 
-    // Decode with backwards compatibility for presets saved without isDefault
+    private enum CodingKeys: String, CodingKey {
+        case id, name, bands, balance, isDefault, controls, isMono
+        /// The removed Volume Boost.
+        case volume
+    }
+
+    // Decodes presets saved without isDefault or controls. A preset saved with
+    // a Volume Boost gets it back as Gain, at the same level, the knobs it did
+    // not have at 0; one at 100 % keeps no controls, as before.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(UUID.self, forKey: .id)
         name = try container.decode(String.self, forKey: .name)
         bands = try container.decode([EQBand].self, forKey: .bands)
-        volume = try container.decode(Float.self, forKey: .volume)
         balance = try container.decode(Float.self, forKey: .balance)
         isDefault = try container.decodeIfPresent(Bool.self, forKey: .isDefault) ?? false
+        controls = try container.decodeIfPresent(ControlValues.self, forKey: .controls)
+        isMono = try container.decodeIfPresent(Bool.self, forKey: .isMono)
+        if controls == nil, let volume = try container.decodeIfPresent(Float.self, forKey: .volume), volume != 1 {
+            var migrated = ControlValues()
+            migrated.gain = ControlValues.gainSteps(fromVolume: volume)
+            controls = migrated
+        }
+    }
+
+    // Writes volume 1 next to the rest: 1.1.1 requires the key and would move
+    // every preset aside as unreadable after a downgrade.
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(name, forKey: .name)
+        try container.encode(bands, forKey: .bands)
+        try container.encode(balance, forKey: .balance)
+        try container.encode(isDefault, forKey: .isDefault)
+        try container.encodeIfPresent(controls, forKey: .controls)
+        try container.encodeIfPresent(isMono, forKey: .isMono)
+        try container.encode(Float(1), forKey: .volume)
     }
 }
 
@@ -48,9 +116,10 @@ final class EQStore: ObservableObject {
     static let defaultFrequencies = EQSettings.frequencies.map { $0 >= 1000 ? "\(Int($0 / 1000))K" : "\(Int($0))" }
 
     @Published var bands: [EQBand]
-    @Published var volume: Float = 1.0
     @Published var balance: Float = 0.0
     @Published var isEnabled: Bool = true
+    @Published var controls = ControlValues()
+    @Published var isMono = false
     @Published var presets: [EQPreset] = []
     @Published var activePresetId: UUID?
     @Published var presetsExpanded: Bool = false
@@ -110,7 +179,7 @@ final class EQStore: ObservableObject {
     }
 
     func savePreset(name: String) {
-        let preset = EQPreset(name: name, bands: bands, volume: volume, balance: balance)
+        let preset = EQPreset(name: name, bands: bands, balance: balance, controls: controls, isMono: isMono)
         presets.insert(preset, at: 0)
         activePresetId = preset.id
         persistPresets()
@@ -118,7 +187,8 @@ final class EQStore: ObservableObject {
 
     func updatePreset(_ preset: EQPreset) {
         guard let index = presets.firstIndex(where: { $0.id == preset.id }) else { return }
-        presets[index] = EQPreset(id: preset.id, name: preset.name, bands: bands, volume: volume, balance: balance)
+        presets[index] = EQPreset(id: preset.id, name: preset.name, bands: bands, balance: balance,
+                                  controls: controls, isMono: isMono)
         persistPresets()
     }
 
@@ -133,6 +203,24 @@ final class EQStore: ObservableObject {
         presets.insert(preset, at: toIndex)
         persistPresets()
     }
+
+    var activePreset: EQPreset? {
+        presets.first { $0.id == activePresetId }
+    }
+
+    /// Whether the sound has moved away from what `preset` holds: bands,
+    /// balance, stereo/mono and the knobs. A preset saved before the knobs
+    /// existed is compared with the knobs as they were when it was applied.
+    func differs(from preset: EQPreset) -> Bool {
+        !bands.lazy.map(\.gain).elementsEqual(preset.bands.lazy.map(\.gain))
+            || balance != preset.balance
+            || isMono != (preset.isMono ?? false)
+            || controls != (preset.controls ?? controlsWhenApplied)
+    }
+
+    /// The knobs right after the active preset was applied. Saved with the
+    /// state, so a change made before a relaunch still shows after it.
+    private var controlsWhenApplied = ControlValues()
 
     func renamePreset(_ preset: EQPreset, to name: String) {
         guard !preset.isDefault, let index = presets.firstIndex(where: { $0.id == preset.id }) else { return }
@@ -151,8 +239,11 @@ final class EQStore: ObservableObject {
 
     func applyPreset(_ preset: EQPreset) {
         bands = preset.bands
-        volume = preset.volume
         balance = preset.balance
+        if let presetControls = preset.controls { controls = presetControls }
+        // Stereo unless the preset was saved in mono.
+        isMono = preset.isMono ?? false
+        controlsWhenApplied = controls
         activePresetId = preset.id
         saveState() // Persist immediately so active preset survives force-quit
     }
@@ -186,19 +277,28 @@ final class EQStore: ObservableObject {
 
     private struct SavedState: Codable {
         var bands: [EQBand]
-        var volume: Float
+        /// The removed Volume Boost: read once and moved into Gain (see
+        /// loadState), and written as 1 because 1.1.1 requires the key and
+        /// would reset the whole state after a downgrade.
+        var volume: Float?
         var balance: Float
         var isEnabled: Bool
+        var isMono: Bool?
         var activePresetId: UUID?
+        var controls: ControlValues?
+        var controlsWhenApplied: ControlValues?
     }
 
     func saveState() {
         let state = SavedState(
             bands: bands,
-            volume: volume,
+            volume: 1,
             balance: balance,
             isEnabled: isEnabled,
-            activePresetId: activePresetId
+            isMono: isMono,
+            activePresetId: activePresetId,
+            controls: controls,
+            controlsWhenApplied: controlsWhenApplied
         )
         guard let data = try? JSONEncoder().encode(state) else { return }
         try? data.write(to: stateURL, options: .atomic)
@@ -208,10 +308,18 @@ final class EQStore: ObservableObject {
         guard let data = try? Data(contentsOf: stateURL),
               let state = try? JSONDecoder().decode(SavedState.self, from: data) else { return }
         bands = state.bands
-        volume = state.volume
         balance = state.balance
         isEnabled = state.isEnabled
+        isMono = state.isMono ?? false
         activePresetId = state.activePresetId
+        if let savedControls = state.controls { controls = savedControls }
+        // Volume Boost was removed in favour of the Gain knob. A saved boost
+        // becomes the same level on Gain once; the next save writes 1, which
+        // is never migrated again.
+        if let legacy = state.volume, legacy != 1, controls.gain == 0 {
+            controls.gain = ControlValues.gainSteps(fromVolume: legacy)
+        }
+        controlsWhenApplied = state.controlsWhenApplied ?? controls
     }
 
     /// Atomic, so a write cut off by a full disk or a crash leaves the previous

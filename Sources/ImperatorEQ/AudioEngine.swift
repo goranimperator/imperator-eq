@@ -27,13 +27,18 @@ enum EngineState: Equatable {
 let engineLog = Logger(subsystem: "com.goranimperator.ImperatorEQ", category: "engine")
 
 extension EQSettings {
-    init(bands: [EQBand], volume: Float, balance: Float) {
-        self.init(gains: bands.map(\.gain), volume: volume, balance: balance)
+    init(bands: [EQBand], balance: Float, controls: ControlValues, mono: Bool) {
+        self.init(gains: bands.map(\.gain), balance: balance)
+        self.mono = mono
+        tone = [controls.bass, controls.mid, controls.treble].map { $0 * Self.toneDecibelsPerStep }
+        warmth = controls.warmth / 10
+        limiter = controls.limiter / 10
+        gain = controls.gain * Self.toneDecibelsPerStep
     }
 }
 
 extension EQStore {
-    var eqSettings: EQSettings { EQSettings(bands: bands, volume: volume, balance: balance) }
+    var eqSettings: EQSettings { EQSettings(bands: bands, balance: balance, controls: controls, mono: isMono) }
 }
 
 /// The main-thread face of the audio engine: published state for the panel,
@@ -97,7 +102,7 @@ final class AudioEngine: ObservableObject {
         updateAccessTimer()
     }
 
-    /// EQ, volume or balance changed. Applied to the running pipeline in place.
+    /// EQ, balance or a CONTROLS knob changed. Applied to the running pipeline in place.
     func settingsChanged(_ settings: EQSettings) {
         controller.update(settings)
     }
