@@ -49,6 +49,7 @@ mkdir -p "${APP_BUNDLE}/Contents/Resources"
 cp "${BIN_PATH}/${APP_NAME}" "${APP_BUNDLE}/Contents/MacOS/"
 cp "Resources/Info.plist" "${APP_BUNDLE}/Contents/"
 cp "Resources/AppIcon.icns" "${APP_BUNDLE}/Contents/Resources/"
+cp "Resources/ThirdPartyNotices.txt" "${APP_BUNDLE}/Contents/Resources/"
 
 echo "Signing app bundle as '${SIGN_IDENTITY}'..."
 if ! security find-identity -v -p codesigning | grep -q "${SIGN_IDENTITY}"; then

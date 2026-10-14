@@ -163,4 +163,4 @@ explicit word in that message.
 
 ## Dependencies
 
-Zero external Swift packages. Uses only Apple frameworks: CoreAudio (process taps), AudioToolbox, AppKit, SwiftUI, Combine, ServiceManagement, os. The only non-public call is the TCC lookup in `SystemAudioAccess`.
+Zero external Swift packages. Two Lucide icons (the save button's plus, Reset's rotate arrow) live as SVG strings in `LucideIcons.swift`, drawn by AppKit as template images; their ISC and MIT notices are `Resources/ThirdPartyNotices.txt`, which build.sh copies into the bundle. Uses only Apple frameworks: CoreAudio (process taps), AudioToolbox, AppKit, SwiftUI, Combine, ServiceManagement, os. The only non-public call is the TCC lookup in `SystemAudioAccess`.

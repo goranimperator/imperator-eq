@@ -123,8 +123,11 @@ struct PopoverContentView: View {
                 Spacer()
 
                 HoverButton(action: { store.resetBands() }) {
-                    Text("Reset")
-                        .font(.caption)
+                    HStack(spacing: 4) {
+                        PanelIcon(LucideIcons.rotateCCW)
+                        Text("Reset")
+                            .font(.caption)
+                    }
                 }
             }
 
@@ -287,6 +290,20 @@ struct PanelButton: View {
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
         .accessibilityAddTraits(isToggle && isSelected ? .isSelected : [])
+    }
+}
+
+/// A `LucideIcons` icon beside caption text, in the text's colour.
+struct PanelIcon: View {
+    let image: NSImage
+
+    init(_ image: NSImage) { self.image = image }
+
+    var body: some View {
+        Image(nsImage: image)
+            .renderingMode(.template)
+            .resizable()
+            .frame(width: 10, height: 10)
     }
 }
 

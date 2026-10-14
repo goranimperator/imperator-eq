@@ -235,6 +235,7 @@ Check the zip people download rather than the bundle in the repo: unzip it and r
 | `Sources/ImperatorEQ/AboutPanel.swift` | About panel |
 | `Sources/ImperatorEQ/AboutCheck.swift` | Brandbook gate for the About panel |
 | `Sources/ImperatorEQ/Theme.swift` | `AppColors`, the Imperator palette |
+| `Sources/ImperatorEQ/LucideIcons.swift` | The two Lucide icons, as their SVG source |
 
 ## Known limits
 
@@ -256,7 +257,10 @@ The app is not notarized, so every machine needs the right-click **Open** on fir
 
 ## Third-party
 
-None. The app uses Apple frameworks only.
+Two icons, the save button's plus and Reset's rotate arrow, come from [Lucide](https://lucide.dev)
+under the ISC License (the plus also under Feather's MIT License); the notices are in
+`Resources/ThirdPartyNotices.txt` and inside the app bundle. Beyond
+that the app uses Apple frameworks only.
 
 ## License
 

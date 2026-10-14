@@ -16,9 +16,8 @@ struct PresetManagerView: View {
                     HStack {
                         Spacer()
                         HoverButton(action: { showSaveSheet = true }) {
-                            HStack(spacing: 3) {
-                                Image(systemName: "plus")
-                                    .font(.system(size: 10))
+                            HStack(spacing: 4) {
+                                PanelIcon(LucideIcons.plus)
                                 Text("Save current as new preset")
                                     .font(.caption)
                             }
