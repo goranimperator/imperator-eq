@@ -37,8 +37,17 @@ so macOS cannot vouch for it. It is provided as is, with no warranty, under the 
 
 Download the zip from the [releases page](https://github.com/goranimperator/imperator-eq/releases),
 unzip it, and drag `Imperator EQ.app` into `/Applications`. The app is signed with a
-self-signed certificate rather than notarized, so the first launch needs a right-click and
-**Open** to get past Gatekeeper.
+self-signed certificate rather than notarized, so Gatekeeper blocks the first launch: the
+dialog says Apple could not verify the app and offers only **Move to Trash** and **Done**.
+Choose **Done**. On current macOS a right-click and **Open** no longer gets past it, so clear
+the quarantine flag once instead, typing the command rather than pasting it from a chat
+window (a pasted line can carry curly quotes and fail with "No such file"):
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/Imperator EQ.app"
+```
+
+An update you download later meets the same dialog, so run the command again after each one.
 
 The app installs nothing else and never asks for an administrator password.
 
@@ -67,6 +76,15 @@ macOS offers apps no public way to read this permission's state, so the app asks
 system's privacy service (TCC) directly. If a future macOS removes that, the app falls back
 to starting the EQ and letting macOS show its own prompt.
 
+**Notifications.** Asked the first time there is a newer version to tell you about, never at
+first launch. Allow it and you get one notification per new version; deny it and nothing
+breaks, the new version still shows as a row in the panel.
+
+**Network.** One request a day, the update check: a `GET` to
+`api.github.com/repos/goranimperator/imperator-eq/releases/latest`. It sends nothing but the
+app's name and version as the User-Agent GitHub requires. No telemetry, no analytics, nothing
+about you or what you play. Turn it off with **Check for updates** in the panel's footer.
+
 ## Use
 
 Click the waveform icon in the menu bar to open the panel. The switch in the header turns
@@ -90,6 +108,13 @@ goes back to what it holds. The built-in presets cannot be changed, so they get 
 
 The output list sets the Mac's sound output, the same setting as the Sound menu, and the EQ
 follows it. **Open at Login** starts the app with the Mac.
+
+**Updates.** Once a day the app asks GitHub whether a newer release is out. When there is one,
+a row above the footer says so and sends one notification; **Download** and the notification
+both open the release page. Installing is up to you, and a downloaded update meets Gatekeeper
+like the first install: choose **Done** and run the `xattr` command from Install again. The
+footer's **Check for updates** switch turns the daily check off, and **Check Now** checks
+straight away, even with the switch off.
 
 ### Upgrading from 1.1.1
 
@@ -238,7 +263,8 @@ Check the zip people download rather than the bundle in the repo: unzip it and r
 | `Sources/ImperatorEQ/AboutPanel.swift` | About panel |
 | `Sources/ImperatorEQ/AboutCheck.swift` | Brandbook gate for the About panel |
 | `Sources/ImperatorEQ/Theme.swift` | `AppColors`, the Imperator palette |
-| `Sources/ImperatorEQ/LucideIcons.swift` | The two Lucide icons, as their SVG source |
+| `Sources/ImperatorEQ/LucideIcons.swift` | The three Lucide icons, as their SVG source |
+| `Sources/ImperatorEQ/UpdateChecker.swift` | The daily check for a newer release on GitHub |
 
 ## Known limits
 
@@ -256,7 +282,8 @@ Headsets, Bluetooth outputs, sleep and wake have not been tested yet.
 While the switch is on, the output device keeps running even when nothing plays. That costs
 some battery: coreaudiod used about 4% of one core in a measurement with the app idle.
 
-The app is not notarized, so every machine needs the right-click **Open** on first launch.
+The app is not notarized, so every machine needs **Done** and the `xattr` command from Install
+on first launch, and again after each downloaded update.
 
 ## Third-party
 

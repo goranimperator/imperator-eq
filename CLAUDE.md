@@ -75,6 +75,7 @@ Measured with `--engine-check` on the built-in speakers: flat EQ is exactly unit
 - **Theme.swift**: `AppColors` enum with brand colors per Imperator brandbook
 - **AboutPanel.swift**: Brandbook 10 About panel. `makePanel()` is split out of `show()` so the gate measures the real window. The SwiftUI view must carry a width but **no height**: an explicit height makes the content report its overflow and the window grows to match (292pt instead of 260pt)
 - **AboutCheck.swift**: `--about-check`, the brandbook gate for that panel
+- **UpdateChecker.swift**: the app-update check, ported unchanged from Imperator DockFolders but for its three constants (repo slug, app name, User-Agent name). Once a day it reads `releases/latest` for this repo and compares the tag numerically with `CFBundleShortVersionString`; a newer one shows as `AppUpdateRow` above the footer and as one local notification per version (`notifiedUpdateVersion`), both opening only `https://github.com` pages. The footer's `UpdateCheckRow` holds the switch (`checkForUpdates`, on by default) and Check Now. Started from `applicationDidFinishLaunching`, so the `--*-check` gates, which exit in `main.swift` first, make no request. "Update" here means a new app release; the preset Update pill and the Update/New/Reset preset bar are a different thing
 
 ### CONTROLS knobs
 
@@ -109,6 +110,8 @@ There is no auto pre-gain: with Limiter at 0, stacked boosts can clip. Mono (`Mo
 **On/off**: the switch stops and starts the whole pipeline. Off means no tap, no mute, native audio, not an EQ in bypass.
 
 **@MainActor isolation**: AudioEngine, EQStore, and AppDelegate are all `@MainActor`. `EngineController` is not an actor; everything it touches runs on its serial queue.
+
+**The only network traffic is the update check**: one `GET` a day to `api.github.com/repos/goranimperator/imperator-eq/releases/latest`, sending nothing but `Imperator-EQ/<version>` as the User-Agent. It is a deliberate, documented feature with an off switch, not stray network code: do not remove it, and do not widen what it sends. The notification permission is asked only when there is an update to report. It needs a release with a higher version to reach anyone, so a release that ships it, or anything users should hear about, must bump the version rather than overwrite the previous tag.
 
 **Unmanaged reference bridging**: The IOProc and the EQ input callback receive the context via `Unmanaged<RenderContext>.passRetained()` / `.takeUnretainedValue()`. `TapPipeline.stop()` stops IO before it releases the context.
 
@@ -163,4 +166,4 @@ explicit word in that message.
 
 ## Dependencies
 
-Zero external Swift packages. Three Lucide icons (plus, check, Reset's rotate arrow) live as SVG strings in `LucideIcons.swift`, drawn by AppKit as template images; their ISC and MIT notices are `Resources/ThirdPartyNotices.txt`, which build.sh copies into the bundle. Uses only Apple frameworks: CoreAudio (process taps), AudioToolbox, AppKit, SwiftUI, Combine, ServiceManagement, os. The only non-public call is the TCC lookup in `SystemAudioAccess`.
+Zero external Swift packages. Three Lucide icons (plus, check, Reset's rotate arrow) live as SVG strings in `LucideIcons.swift`, drawn by AppKit as template images; their ISC and MIT notices are `Resources/ThirdPartyNotices.txt`, which build.sh copies into the bundle. Uses only Apple frameworks: CoreAudio (process taps), AudioToolbox, AppKit, SwiftUI, Combine, ServiceManagement, Observation, UserNotifications, os. The only non-public call is the TCC lookup in `SystemAudioAccess`.

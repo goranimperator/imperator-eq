@@ -22,6 +22,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setupAudioBindings()
 
         audioEngine.setup(store: eqStore)
+        // The daily check for a newer release, the app's only network request.
+        UpdateChecker.shared.start()
     }
 
     func applicationWillTerminate(_ notification: Notification) {

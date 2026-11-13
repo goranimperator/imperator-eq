@@ -29,6 +29,7 @@ struct PopoverContentView: View {
             // fades as one, at one level. It all stays usable, so the sound can
             // be set up before the EQ is turned on.
             .opacity(store.isEnabled ? 1 : Self.offOpacity)
+            AppUpdateRow()
             Divider()
             footerView
         }
@@ -215,29 +216,111 @@ struct PopoverContentView: View {
     }
 
     private var footerView: some View {
-        HStack(spacing: 12) {
-            LaunchAtLoginToggle()
+        VStack(spacing: 8) {
+            HStack(spacing: 12) {
+                LaunchAtLoginToggle()
 
-            Spacer()
+                Spacer()
 
-            // The panel sits at the pop-up menu level, above ordinary windows,
-            // so it closes first or the About panel would open behind it.
-            HoverButton {
-                dismissAction()
-                AboutPanel.show()
-            } label: {
-                Text("About")
-                    .font(.caption)
+                // The panel sits at the pop-up menu level, above ordinary windows,
+                // so it closes first or the About panel would open behind it.
+                HoverButton {
+                    dismissAction()
+                    AboutPanel.show()
+                } label: {
+                    Text("About")
+                        .font(.caption)
+                }
+                .help("About Imperator EQ")
+
+                HoverButton(action: quitAction) {
+                    Text("Quit")
+                        .font(.caption)
+                }
             }
-            .help("About Imperator EQ")
-
-            HoverButton(action: quitAction) {
-                Text("Quit")
-                    .font(.caption)
-            }
+            UpdateCheckRow()
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
+    }
+}
+
+/// A newer release of the app itself, from `UpdateChecker`; not the preset
+/// update bar. It sits outside the body that fades with the switch off, so it
+/// reads at full strength either way, and opens the release page: installing
+/// stays manual.
+struct AppUpdateRow: View {
+    var body: some View {
+        if let update = UpdateChecker.shared.available {
+            VStack(spacing: 0) {
+                Divider()
+                HStack(spacing: 10) {
+                    Image(systemName: "arrow.down.circle.fill")
+                        .font(.system(size: 16))
+                        .foregroundStyle(AppColors.brand)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Version \(update.version) is out")
+                            .font(.system(size: 12, weight: .medium))
+                        Text("You have \(UpdateChecker.currentVersion)")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Download") { UpdateChecker.open(update.page) }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+            }
+        }
+    }
+}
+
+/// The footer's second row: the daily check's switch, its last result, and
+/// Check Now, which runs even with the switch off because it is asked for.
+/// The panel has no settings window, so this is where they live.
+struct UpdateCheckRow: View {
+    @AppStorage(UpdateChecker.enabledKey) private var checkForUpdates = true
+
+    var body: some View {
+        HStack(spacing: 12) {
+            HStack(spacing: 6) {
+                Text("Check for updates")
+                    .font(.caption)
+                    .foregroundStyle(.primary)
+                Toggle("", isOn: $checkForUpdates)
+                    .brandSwitch()
+                    .onChange(of: checkForUpdates) { _, on in
+                        if on { UpdateChecker.shared.checkIfDue() }
+                    }
+            }
+            .hoverDimmed()
+
+            Spacer()
+
+            Text(status)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+
+            HoverButton(action: { Task { await UpdateChecker.shared.check() } }) {
+                Text("Check Now")
+                    .font(.caption)
+            }
+            .disabled(UpdateChecker.shared.status == .checking)
+        }
+    }
+
+    /// Short, to fit beside the switch; nothing while the row above shows a
+    /// newer version.
+    private var status: String {
+        switch UpdateChecker.shared.status {
+        case .idle, .available: return ""
+        case .checking: return "Checking\u{2026}"
+        case .upToDate: return "Up to date"
+        case .failed: return "Could not reach GitHub"
+        }
     }
 }
 
