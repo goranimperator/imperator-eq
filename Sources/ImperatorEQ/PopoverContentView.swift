@@ -23,6 +23,7 @@ struct PopoverContentView: View {
                 channelModeSection
                 PresetManagerView()
                 updatePresetBanner
+                UpdateCheckRow()
             }
             .padding(16)
             // With the switch off, everything between the header and the footer
@@ -216,29 +217,26 @@ struct PopoverContentView: View {
     }
 
     private var footerView: some View {
-        VStack(spacing: 8) {
-            HStack(spacing: 12) {
-                LaunchAtLoginToggle()
+        HStack(spacing: 12) {
+            LaunchAtLoginToggle()
 
-                Spacer()
+            Spacer()
 
-                // The panel sits at the pop-up menu level, above ordinary windows,
-                // so it closes first or the About panel would open behind it.
-                HoverButton {
-                    dismissAction()
-                    AboutPanel.show()
-                } label: {
-                    Text("About")
-                        .font(.caption)
-                }
-                .help("About Imperator EQ")
-
-                HoverButton(action: quitAction) {
-                    Text("Quit")
-                        .font(.caption)
-                }
+            // The panel sits at the pop-up menu level, above ordinary windows,
+            // so it closes first or the About panel would open behind it.
+            HoverButton {
+                dismissAction()
+                AboutPanel.show()
+            } label: {
+                Text("About")
+                    .font(.caption)
             }
-            UpdateCheckRow()
+            .help("About Imperator EQ")
+
+            HoverButton(action: quitAction) {
+                Text("Quit")
+                    .font(.caption)
+            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
@@ -277,9 +275,9 @@ struct AppUpdateRow: View {
     }
 }
 
-/// The footer's second row: the daily check's switch, its last result, and
-/// Check Now, which runs even with the switch off because it is asked for.
-/// The panel has no settings window, so this is where they live.
+/// The last row of the panel body, above the footer: the daily check's switch,
+/// its last result, and Check Now, which runs even with the switch off because
+/// it is asked for. The panel has no settings window, so this is where they live.
 struct UpdateCheckRow: View {
     @AppStorage(UpdateChecker.enabledKey) private var checkForUpdates = true
 

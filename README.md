@@ -83,7 +83,7 @@ breaks, the new version still shows as a row in the panel.
 **Network.** One request a day, the update check: a `GET` to
 `api.github.com/repos/goranimperator/imperator-eq/releases/latest`. It sends nothing but the
 app's name and version as the User-Agent GitHub requires. No telemetry, no analytics, nothing
-about you or what you play. Turn it off with **Check for updates** in the panel's footer.
+about you or what you play. Turn it off with **Check for updates** at the bottom of the panel.
 
 ## Use
 
@@ -113,7 +113,7 @@ follows it. **Open at Login** starts the app with the Mac.
 a row above the footer says so and sends one notification; **Download** and the notification
 both open the release page. Installing is up to you, and a downloaded update meets Gatekeeper
 like the first install: choose **Done** and run the `xattr` command from Install again. The
-footer's **Check for updates** switch turns the daily check off, and **Check Now** checks
+**Check for updates** switch at the bottom of the panel turns the daily check off, and **Check Now** checks
 straight away, even with the switch off.
 
 ### Upgrading from 1.1.1
