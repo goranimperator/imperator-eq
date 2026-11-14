@@ -275,49 +275,51 @@ struct AppUpdateRow: View {
     }
 }
 
-/// The last row of the panel body, above the footer: the daily check's switch,
-/// its last result, and Check Now, which runs even with the switch off because
+/// The last rows of the panel body, above the footer: the daily check's switch
+/// on one row, its last result and Check Now on the next, which runs even with the switch off because
 /// it is asked for. The panel has no settings window, so this is where they live.
 struct UpdateCheckRow: View {
     @AppStorage(UpdateChecker.enabledKey) private var checkForUpdates = true
 
     var body: some View {
-        HStack(spacing: 12) {
-            HStack(spacing: 6) {
+        VStack(spacing: 8) {
+            HStack {
                 Text("Check for updates")
                     .font(.caption)
                     .foregroundStyle(.primary)
+                Spacer()
                 Toggle("", isOn: $checkForUpdates)
-                    .brandSwitch()
+                    .brandSwitch(anchor: .trailing)
                     .onChange(of: checkForUpdates) { _, on in
                         if on { UpdateChecker.shared.checkIfDue() }
                     }
             }
             .hoverDimmed()
 
-            Spacer()
-
-            Text(status)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-
-            HoverButton(action: { Task { await UpdateChecker.shared.check() } }) {
-                Text("Check Now")
+            HStack {
+                Text(status)
                     .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Spacer()
+                HoverButton(action: { Task { await UpdateChecker.shared.check() } }) {
+                    Text("Check Now")
+                        .font(.caption)
+                }
+                .disabled(UpdateChecker.shared.status == .checking)
             }
-            .disabled(UpdateChecker.shared.status == .checking)
         }
     }
 
-    /// Short, to fit beside the switch; nothing while the row above shows a
-    /// newer version.
+    /// The last result, with the running version.
     private var status: String {
+        let current = UpdateChecker.currentVersion
         switch UpdateChecker.shared.status {
-        case .idle, .available: return ""
+        case .idle: return "Version \(current)"
         case .checking: return "Checking\u{2026}"
-        case .upToDate: return "Up to date"
+        case .upToDate: return "Up to date, version \(current)"
         case .failed: return "Could not reach GitHub"
+        case .available(let release): return "Version \(release.version) is available"
         }
     }
 }
