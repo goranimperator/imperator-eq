@@ -452,12 +452,21 @@ struct SectionTitle: View {
 /// A section title that opens and closes the rows under it.
 struct CollapsibleHeader: View {
     let title: String
+    /// Shown after the title on the same row, regular where the title is bold:
+    /// PRESETS names the active preset.
+    var detail: String?
     @Binding var isExpanded: Bool
 
     var body: some View {
         Button(action: { isExpanded.toggle() }) {
-            HStack {
+            HStack(spacing: 8) {
                 SectionTitle(title)
+                if let detail {
+                    Text(detail)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
                 Spacer()
                 Image(systemName: "chevron.right")
                     .font(.system(size: 11, weight: .medium))

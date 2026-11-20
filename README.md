@@ -24,7 +24,7 @@ so macOS cannot vouch for it. It is provided as is, with no warranty, under the 
   from clipping)
 - Left/right balance, and a Stereo/Mono choice above the presets (mono plays the average of
   both channels on both sides, for one earbud or hard-panned tracks)
-- Named presets you can save, rename, reorder and delete. A preset keeps the bands, the
+- Named presets you can save, rename, reorder and delete. The active one is named next to PRESETS, even with the list closed. A preset keeps the bands, the
   knobs, balance and Stereo/Mono. When the sound moves away from the active preset, a red
   **Update** pill appears on its row. With PRESETS closed, three buttons at the bottom of the
   panel take over: **Update preset** saves into it, **New preset** saves the sound as a new

@@ -9,7 +9,7 @@ struct PresetManagerView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            CollapsibleHeader(title: "PRESETS", isExpanded: $store.presetsExpanded)
+            CollapsibleHeader(title: "PRESETS", detail: store.activePreset?.name, isExpanded: $store.presetsExpanded)
 
             if store.presetsExpanded {
                 VStack(alignment: .leading, spacing: 8) {
