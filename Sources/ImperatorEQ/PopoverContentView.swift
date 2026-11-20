@@ -465,8 +465,8 @@ struct SectionTitle: View {
 /// A section title that opens and closes the rows under it.
 struct CollapsibleHeader: View {
     let title: String
-    /// Shown after the title on the same row, regular where the title is bold:
-    /// PRESETS names the active preset.
+    /// Shown after the title on the same row, regular where the title is bold,
+    /// behind a brand red dot: PRESETS names the active preset.
     var detail: String?
     @Binding var isExpanded: Bool
 
@@ -475,10 +475,15 @@ struct CollapsibleHeader: View {
             HStack(spacing: 8) {
                 SectionTitle(title)
                 if let detail {
-                    Text(detail)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(AppColors.brand)
+                            .frame(width: 8, height: 8)
+                        Text(detail)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
                 }
                 Spacer()
                 Image(systemName: "chevron.right")
