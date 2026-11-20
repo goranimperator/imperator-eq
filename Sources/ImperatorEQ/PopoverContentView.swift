@@ -15,6 +15,8 @@ struct PopoverContentView: View {
         VStack(spacing: 0) {
             headerView
             Divider()
+            activateRow
+            Divider()
             VStack(spacing: 16) {
                 engineNotice
                 OutputDeviceView()
@@ -68,12 +70,23 @@ struct PopoverContentView: View {
                 .font(.headline)
 
             Spacer()
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+    }
 
+    /// The on/off switch, on its own row under the header: ACTIVATE at the left,
+    /// the switch at the right edge. It sits outside the body that fades when
+    /// it is off, so it reads at full strength either way.
+    private var activateRow: some View {
+        HStack {
+            SectionTitle("ACTIVATE")
+            Spacer()
             Toggle("", isOn: $store.isEnabled)
                 .brandSwitch(anchor: .trailing)
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(.vertical, 10)
     }
 
     /// Shown only when the switch is on but the EQ is not processing, so the

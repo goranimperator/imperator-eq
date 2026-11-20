@@ -87,10 +87,10 @@ about you or what you play. Turn it off with **Check for updates** at the bottom
 
 ## Use
 
-Click the waveform icon in the menu bar to open the panel. The switch in the header turns
-processing on and off. With it off, everything between the header and the footer fades, but
-it all still works, so you can set the sound up before turning the EQ on. From the top, the panel has the output list, EQUALIZER, CONTROLS,
-the Stereo/Mono row and PRESETS.
+Click the waveform icon in the menu bar to open the panel. The **ACTIVATE** switch under the
+header turns processing on and off. With it off, everything between it and the footer fades, but
+it all still works, so you can set the sound up before turning the EQ on. From the top, the
+panel has the output list, EQUALIZER, CONTROLS, the Stereo/Mono row and PRESETS.
 
 Drag the band sliders to shape the sound, or pick a preset; the sound changes while you
 drag. **Reset** returns every band to flat, and the one in CONTROLS puts every knob back at 0
